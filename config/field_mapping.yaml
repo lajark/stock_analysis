@@ -1,0 +1,58 @@
+# Tushare <-> AkShare 字段映射
+# 目标字段名: [Tushare 字段名, AkShare 字段名]
+
+stock_basic:
+  code: [ts_code, 代码]
+  name: [name, 名称]
+  industry: [industry, 行业]
+  area: [area, 省份]
+  list_date: [list_date, 上市时间]
+
+daily:
+  trade_date: [trade_date, 日期]
+  open: [open, 开盘]
+  high: [high, 最高]
+  low: [low, 最低]
+  close: [close, 收盘]
+  volume: [vol, 成交量]
+  amount: [amount, 成交额]
+
+daily_basic:
+  pe_ttm: [pe_ttm, null]
+  pb: [pb, null]
+  ps_ttm: [ps_ttm, null]
+  total_mv: [total_mv, null]
+  circ_mv: [circ_mv, null]
+
+adj_factor:
+  trade_date: [trade_date, null]
+  adj_factor: [adj_factor, null]
+
+income:
+  end_date: [end_date, null]
+  revenue: [revenue, null]
+  operating_profit: [operate_profit, null]
+  net_profit: [n_income, null]
+  eps: [eps, null]
+
+balance_sheet:
+  end_date: [end_date, null]
+  total_assets: [total_assets, null]
+  total_liabilities: [total_liab, null]
+  shareholders_equity: [total_hldr_eqy_exc_min_int, null]
+
+cashflow:
+  end_date: [end_date, null]
+  operating_cf: [n_cashflow_act, null]
+  investing_cf: [n_cashflow_inv_act, null]
+  financing_cf: [n_cashflow_fin_act, null]
+
+fina_indicator:
+  end_date: [end_date, null]
+  roe: [roe, null]
+  roa: [roa, null]
+  gross_margin: [grossprofit_margin, null]
+  net_margin: [netprofit_margin, null]
+  debt_to_assets: [debt_to_assets, null]
+  current_ratio: [current_ratio, null]
+  quick_ratio: [quick_ratio, null]

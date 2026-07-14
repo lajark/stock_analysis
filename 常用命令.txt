@@ -1,0 +1,76 @@
+========================================
+ stock_analysis 常用命令参考
+========================================
+
+--- 安装与配置 ---
+
+# 安装依赖
+pip install -e .
+
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env 填入 TUSHARE_TOKEN 和 LLM_API_KEY
+
+--- 分析命令 ---
+
+# 快速扫描（最低 Token 消耗）
+python -m src.app.cli analyze --ticker 600519 --mode quick
+
+# 交易决策（含目标价位和置信度）
+python -m src.app.cli analyze --ticker 600519 --mode trade
+
+# 深度分析（含知识库，使用深度模型）
+python -m src.app.cli analyze --ticker 600519 --mode deep
+
+# 价值评估
+python -m src.app.cli analyze --ticker 600519 --mode value
+
+# 无 LLM 模式（仅输出分析包 JSON，零 Token）
+python -m src.app.cli analyze --ticker 600519 --mode quick --no-llm
+
+# 指定分析日期
+python -m src.app.cli analyze --ticker 600519 --mode trade --date 2026-07-01
+
+# 调试模式
+python -m src.app.cli analyze --ticker 600519 --mode trade --debug
+
+--- 可视化 ---
+
+# 生成 K 线图
+python -m src.app.cli analyze --ticker 600519 --mode trade --chart
+
+# 图表保存在 output/charts/ 目录
+
+--- 多股票对比 ---
+
+# 多股票横向对比
+python -m src.app.cli compare --tickers 600519,000858,002837
+
+--- 历史与统计 ---
+
+# 查看分析历史
+python -m src.app.cli history
+
+# 查看特定股票的历史
+python -m src.app.cli history --ticker 600519
+
+# 查看 Token 消耗统计
+python -m src.app.cli cost
+
+# 查看各模式说明
+python -m src.app.cli modes
+
+--- 测试 ---
+
+# 运行全部测试
+pytest tests/ -v
+
+# 运行指定测试
+pytest tests/test_indicators.py -v
+
+--- 模式说明 ---
+
+quick  - 快速扫描：基础分析，零知识库，fast 模型，~3K tokens
+deep   - 深度分析：含知识库检索，pro 模型，~6K tokens
+value  - 价值评估：聚焦估值和安全边际，fast 模型，~3K tokens
+trade  - 交易决策：支撑/阻力/目标价/置信度，fast 模型，~4K tokens
