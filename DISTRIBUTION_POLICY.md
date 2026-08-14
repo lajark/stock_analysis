@@ -247,8 +247,10 @@ Secret 泄露时：立即轮换/吊销凭据、暂停分发、确认暴露范围
 - 版本目标：`v1.2.0`。
 - 本地已统一版本号、快捷方式说明、中英文发布说明和 Inno Setup 构建版本。
 - `THIRD_PARTY_NOTICES.md` 已加入源码和安装包；`scripts/generate_release_metadata.py` 可生成 checksum 与 release manifest，并默认拒绝脏工作区。
-- 当前候选源码仍包含未提交改动，尚未形成 `v1.2.0` Tag；候选安装器只能作为本地验证产物，不得直接公开发布。
-- 当前受限环境无法完成干净 Windows 11 安装冒烟，因此 Release Manifest 的 `release_ready` 必须保持为 `false`，直到提交、打 Tag 和实机验证完成。
+- 共享产品提交为 `bbfeb1c848e559871b082ef2521b593685811c3e`，`v1.2.0` Tag 指向产品提交 `dfdbf58944f4af1a01e6b88648381c413601e959`；GitHub 与 Gitee 已完成同步，无需强制推送。
+- 历史清理后，所有可达提交的作者/提交者邮箱均为 `noreply` 形式；原含真实邮箱的 `e1ebe98` 已不在任何分支、Tag 或远程引用中。
+- GitHub `main` 保持英文 `README.md`；Gitee 仅增加 `README.md` 中文文档提交 `8b5ffc8`，其他产品文件与共享提交一致，符合 §4 的 README 语言例外。
+- 当前受限环境无法完成干净 Windows 11 安装冒烟，因此 Release Manifest 的 `release_ready` 仍为 `false`；候选安装器不得在实机验证前宣称为正式发布版。
 
 ## 10. 最低验收清单
 
@@ -261,4 +263,4 @@ Secret 泄露时：立即轮换/吊销凭据、暂停分发、确认暴露范围
 - [x] 推送前 Secret/路径扫描命令已实现。
 - [ ] CI 第二层分发守门已实现。
 - [x] Release Manifest/checksum 生成脚本和第三方许可通知已提供。
-- [ ] Windows 正式 Release 可追溯至同步后的源码 Tag。
+- [ ] Windows 正式 Release 在正常 Windows 11 环境完成安装、启动和快捷方式验证后发布。
