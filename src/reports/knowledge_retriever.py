@@ -7,10 +7,10 @@
 """
 
 import re
-from pathlib import Path
-from typing import Optional
 
-KB_DIR = Path(__file__).resolve().parent.parent.parent / "knowledge_base"
+from src.runtime_paths import resource_root
+
+KB_DIR = resource_root() / "knowledge_base"
 
 # 分析维度 → (知识库文件, 章节) 映射
 DIMENSION_MAP = {
@@ -25,7 +25,7 @@ DIMENSION_MAP = {
     "sentiment": ("technical_analysis_guide.md", "2.3 市场情绪"),
     "technical_risk": ("technical_analysis_guide.md", "4. 风险评估"),
     # 策略
-    "peg_strategy": ("single_stock_strategy.md", "PEG策略"),
+    "peg_strategy": ("single_stock_strategy.md", "个股基本面×趋势双轮动策略"),
     "buy_signal": ("ai_analysis_prompts.md", "2.1 买入分析"),
     "sell_signal": ("ai_analysis_prompts.md", "2.2 卖出分析"),
     "hold_signal": ("ai_analysis_prompts.md", "2.3 持有分析"),
@@ -44,35 +44,22 @@ DIMENSION_MAP = {
 def _extract_section(content: str, section_title: str) -> str:
     """从 Markdown 内容中提取指定章节。
 
-    匹配 `## 标题` 或 `### 标题` 级别的章节，提取到下一个同级标题之前。
+    匹配任意层级 Markdown 标题，提取到下一个同级或更高级标题之前。
     """
-    # 确定标题级别
-    if section_title.startswith("1.") or section_title.startswith("2.") or section_title.startswith("3.") or section_title.startswith("4.") or section_title.startswith("5.") or section_title.startswith("6."):
-        prefix = "## "
-    else:
-        prefix = "### "
-
-    # 构建匹配模式
     escaped_title = re.escape(section_title)
-    pattern = rf"{prefix}.*?{escaped_title}.*?\n"
-
-    match = re.search(pattern, content, re.IGNORECASE)
+    pattern = rf"^(?P<marks>#{{1,6}})[ \t]+[^\n]*{escaped_title}[^\n]*$"
+    match = re.search(pattern, content, re.IGNORECASE | re.MULTILINE)
     if not match:
         return ""
 
     start = match.start()
-    # 找到下一个同级标题
     rest = content[match.end():]
-    next_section = re.search(rf"^{prefix}", rest, re.MULTILINE)
+    level = len(match.group("marks"))
+    next_section = re.search(rf"^#{{1,{level}}}[ \t]+", rest, re.MULTILINE)
     if next_section:
         end = match.end() + next_section.start()
     else:
-        # 找下一个更高级标题
-        next_higher = re.search(r"^## ", rest, re.MULTILINE)
-        if next_higher:
-            end = match.end() + next_higher.start()
-        else:
-            end = len(content)
+        end = len(content)
 
     return content[start:end].strip()
 
@@ -85,7 +72,7 @@ def _load_file(filename: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def retrieve(analysis_mode: str, dimensions: Optional[list[str]] = None) -> str:
+def retrieve(analysis_mode: str, dimensions: list[str] | None = None) -> str:
     """按需检索知识库片段。
 
     Args:

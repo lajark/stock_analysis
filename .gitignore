@@ -4,16 +4,45 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+installer/
 .venv/
 venv/
 
 # 敏感配置
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
 
 # 数据与输出
 data/cache/
 output/
 logs/
+*.duckdb
+*.db
+*.sqlite*
+*.parquet
+
+# 内部规划与本机协作
+PRD.md
+TODO.md
+AGENTS.md
+CLAUDE*.md
+.claude/
+.workspace/
+定制命令.txt
+
+# 测试与覆盖率
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # IDE
 .vscode/
