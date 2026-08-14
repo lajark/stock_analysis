@@ -1,6 +1,6 @@
 #define MyAppName "股票分析工具"
 #define MyAppEnglishName "StockAnalysis"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.1"
 #define MyAppPublisher "stock_analysis"
 #define MyAppExeName "StockAnalysis.exe"
 

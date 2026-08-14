@@ -1,7 +1,7 @@
 # Third-Party Notices
 
 This file records the direct runtime and build dependencies used by
-`stock_analysis` v1.2.0. The upstream license and notice files govern each
+`stock_analysis` v1.2.1. The upstream license and notice files govern each
 dependency. The Windows installer may also contain transitive dependencies
 pulled in by these packages; their upstream metadata remains authoritative.
 
