@@ -1,0 +1,29 @@
+# stock_analysis v1.2.0 — 更新说明
+
+## 主要更新
+
+- 新增证据优先分析包，统一记录数据质量、来源、校验结果、情景、失效条件和结构化变化。
+- 新增 Data Gateway，统一缓存、Tushare 主数据源和 AkShare 的明确降级边界。
+- 新增确定性 Context Router，在 LLM 调用前记录知识片段 ID、内容哈希并限制上下文大小。
+- Windows 安装器默认创建桌面快捷方式，同时保留开始菜单快捷方式；普通 GUI 使用无需命令行。
+- 保留四种分析模式、`--no-llm` 路径、本地优先计算和单次 LLM 成本控制。
+
+## 验证情况
+
+- 测试套件：75 项通过。
+- 已根据 v1.2.0 配置重新构建 Windows 安装包。
+- 安装器静态检查确认包含开始菜单和默认桌面快捷方式。
+- 正式发布前仍需在正常 Windows 11 环境完成干净安装和启动验证；当前受限环境静默安装时无法展开 `localappdata` Shell Folder。
+
+## 分发文件
+
+- `StockAnalysis-Setup-1.2.0.exe`
+- `checksums.sha256`
+- `release-manifest.json`
+- `THIRD_PARTY_NOTICES.md`
+
+## 使用说明
+
+- 正常获取数据需要配置 Tushare Token；LLM 配置为可选项。
+- 本工具不执行交易，也不连接券商账户。
+- 原有 CLI 使用方式继续保留，供开发者和自动化场景使用。

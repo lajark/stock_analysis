@@ -138,14 +138,13 @@ def analyze(
     for i, code in enumerate(codes):
         if len(codes) > 1:
             console.print(f"\n[bold]--- [{i+1}/{len(codes)}] {code} ---[/]")
-        _analyze_single(code, date, mode, mode_info, no_llm, chart)
+        _analyze_single(code, date, mode, no_llm, chart)
 
 
 def _analyze_single(
     code: str,
     date: str,
     mode: str,
-    mode_info: dict,
     no_llm: bool,
     chart: bool = False,
 ):
@@ -292,13 +291,13 @@ def compare(
     from rich.table import Table
 
     from src.analysis.comparison import compare_stocks
-    from src.data.providers.tushare import TushareProvider
+    from src.data.gateway import DataGateway
 
     codes = [_validate_ticker(t.strip()) for t in tickers.split(",")]
     if date is None:
         date = datetime.now().strftime("%Y-%m-%d")
 
-    provider = TushareProvider()
+    gateway = DataGateway()
     stocks_data = {}
 
     console.print(f"\n[bold cyan]多股票对比[/] — {len(codes)} 只, {date}")
@@ -306,11 +305,15 @@ def compare(
     for code in codes:
         console.print(f"[dim]获取 {code}...[/]", end=" ")
         try:
-            info = provider.get_stock_basic(code)
-            daily = provider.get_daily(code, "20240101", date)
-            daily_basic = provider.get_daily_basic(code, date)
-            stocks_data[code] = {"info": info, "daily": daily, "daily_basic": daily_basic}
-            console.print(f"[green]{info['name']} ({len(daily)} 日线)[/]")
+            data = gateway.fetch_market_data(code, "20240101", date)
+            for warning in data.warnings:
+                console.print(f"[yellow]{warning}[/]")
+            stocks_data[code] = {
+                "info": data.stock_info,
+                "daily": data.daily,
+                "daily_basic": data.daily_basic,
+            }
+            console.print(f"[green]{data.stock_info['name']} ({len(data.daily)} 日线)[/]")
         except Exception as e:
             console.print(f"[red]失败: {e}[/]")
 

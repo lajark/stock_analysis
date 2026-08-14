@@ -3,7 +3,7 @@
 import json
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -11,8 +11,11 @@ from typing import Any, TypedDict
 
 from loguru import logger
 
+from src.analysis.contracts import RunRecord
+from src.analysis.validation_gate import validate_analysis_inputs
+from src.app.run_records import RunRecordStore
 from src.config import get_config
-from src.errors import ConfigError, StockAnalysisError
+from src.errors import ConfigError, DataValidationError, StockAnalysisError
 from src.runtime_paths import resource_root
 
 ProgressCallback = Callable[[str], None]
@@ -103,32 +106,103 @@ def analyze_stock(
     progress: ProgressCallback | None = None,
 ) -> AnalysisResult:
     """Run the existing analysis pipeline and return its generated files."""
-    validated = validate_request(request)
-    config = get_config()
+    run = RunRecord.start(
+        {
+            "ticker": request.ticker,
+            "mode": request.mode,
+            "analysis_date": request.date or "",
+            "use_llm": request.use_llm,
+            "chart": request.chart,
+        }
+    )
+    run_store = RunRecordStore()
     started_at = time.monotonic()
 
     try:
-        _notify(progress, "正在获取股票与行情数据…")
-        from src.data.providers.tushare import TushareProvider
+        stage_started = time.monotonic()
+        validated = validate_request(request)
+        run.complete_stage(
+            "validate_request",
+            elapsed_ms=_elapsed_ms(stage_started),
+            details={
+                "ticker": validated.ticker,
+                "analysis_date": validated.date,
+                "use_llm": validated.use_llm,
+            },
+        )
+        config = get_config()
 
-        provider = TushareProvider()
-        stock_info = provider.get_stock_basic(validated.ticker)
-        daily = provider.get_daily(validated.ticker, "20240101", validated.date or "")
-        if daily.empty:
-            raise StockAnalysisError(f"{validated.ticker} 没有可用的日线数据")
-        daily_basic = provider.get_daily_basic(validated.ticker, validated.date or "")
-        income = provider.get_income(validated.ticker, "20220101", validated.date or "")
-        balance_sheet = provider.get_balance_sheet(
-            validated.ticker, "20220101", validated.date or ""
+        _notify(progress, "正在获取股票与行情数据…")
+        stage_started = time.monotonic()
+        from src.data.gateway import DataGateway
+
+        data = DataGateway().fetch(
+            validated.ticker,
+            "20240101",
+            validated.date or "",
+            financial_start_date="20220101",
         )
-        cashflow = provider.get_cashflow(validated.ticker, "20220101", validated.date or "")
-        fina_indicator = provider.get_fina_indicator(
-            validated.ticker, "20220101", validated.date or ""
+        if data.warnings:
+            for warning in data.warnings:
+                logger.warning(warning)
+        run.complete_stage(
+            "acquire_data",
+            elapsed_ms=_elapsed_ms(stage_started),
+            details={
+                "providers": data.providers,
+                "quality": data.quality,
+                "cache_datasets": [
+                    name for name, provider in data.providers.items() if provider == "cache"
+                ],
+                "warning_count": len(data.warnings),
+            },
         )
+        stock_info = data.stock_info
+        daily = data.daily
+        daily_basic = data.daily_basic
+        income = data.income
+        balance_sheet = data.balance_sheet
+        cashflow = data.cashflow
+        fina_indicator = data.fina_indicator
+
+        stage_started = time.monotonic()
+        validation = validate_analysis_inputs(
+            run_id=run.run_id,
+            ticker=validated.ticker,
+            requested_date=validated.date or "",
+            daily=daily,
+            datasets={
+                "daily_basic": daily_basic,
+                "income": income,
+                "balance_sheet": balance_sheet,
+                "cashflow": cashflow,
+                "fina_indicator": fina_indicator,
+            },
+            data_quality=data.quality,
+            data_gaps=data.data_gaps,
+        )
+        run.complete_stage(
+            "validate_evidence",
+            elapsed_ms=_elapsed_ms(stage_started),
+            details={
+                "status": validation.status,
+                "allow_llm": validation.allow_llm,
+                "confidence_cap": validation.confidence_cap,
+                "blocking_reasons": validation.blocking_reasons,
+            },
+        )
+        if not validation.allow_llm:
+            reason = "；".join(validation.blocking_reasons) or "关键数据未通过校验"
+            raise DataValidationError(
+                f"数据质量校验未通过，已阻止报告生成：{reason}",
+                code="validation_block",
+            )
 
         _notify(progress, "正在计算本地分析指标…")
         from src.analysis.package import build_analysis_package, package_to_json
 
+        stage_started = time.monotonic()
+        previous_package = _load_previous_package(config.json_dir, validated.ticker)
         package = build_analysis_package(
             stock_info=stock_info,
             daily=daily,
@@ -138,12 +212,35 @@ def analyze_stock(
             cashflow=cashflow,
             fina_indicator=fina_indicator,
             analysis_date=validated.date or "",
+            run_id=run.run_id,
+            provider_name=data.provider_label,
+            dataset_providers=data.providers,
+            dataset_quality=data.quality,
+            data_warnings=data.warnings,
+            validation=validation.to_dict(),
+            previous_package=previous_package,
+        )
+        run.complete_stage(
+            "build_evidence",
+            elapsed_ms=_elapsed_ms(stage_started),
+            details={
+                "schema_version": package.get("schema_version"),
+                "quality": package.get("quality"),
+                "data_gaps": package.get("data_gaps", []),
+            },
         )
 
         tokens: dict[str, Any] = {}
+        evidence_path: Path | None = None
+        stage_started = time.monotonic()
         if validated.use_llm:
             _notify(progress, "正在生成 AI 分析报告…")
-            output_path, tokens = _create_llm_report(package, validated.mode)
+            context = _route_context(validated.mode, package)
+            output_path, tokens = _create_llm_report(
+                package,
+                validated.mode,
+                context=context,
+            )
             output_kind = "report"
             from src.app.history import AnalysisHistory
 
@@ -156,6 +253,30 @@ def analyze_stock(
                 cost=estimate_cost(tokens),
                 date=validated.date or "",
             )
+            run.complete_stage(
+                "generate_report",
+                elapsed_ms=_elapsed_ms(stage_started),
+                details={
+                    "llm_used": True,
+                    "model": tokens.get("model", config.llm_model),
+                    "prompt_version": f"{validated.mode}-v1",
+                    "tokens": tokens,
+                    "artifact": str(output_path),
+                    "context_router_version": context["router_version"],
+                    "context_dimensions": context["dimensions"],
+                    "context_fragment_ids": [
+                        fragment["id"] for fragment in context["fragments"]
+                    ],
+                    "context_hash": context["content_hash"],
+                    "context_chars": context["char_count"],
+                },
+            )
+            evidence_path = _save_evidence_package(
+                config.json_dir,
+                validated.ticker,
+                run.run_id,
+                package,
+            )
         else:
             _notify(progress, "正在保存本地分析结果…")
             config.json_dir.mkdir(parents=True, exist_ok=True)
@@ -164,9 +285,24 @@ def analyze_stock(
             )
             output_path.write_text(package_to_json(package), encoding="utf-8")
             output_kind = "json"
+            run.complete_stage(
+                "generate_report",
+                elapsed_ms=_elapsed_ms(stage_started),
+                details={
+                    "llm_used": False,
+                    "model": None,
+                    "prompt_version": None,
+                    "tokens": {},
+                    "artifact": str(output_path),
+                },
+            )
+
+        if evidence_path is not None:
+            run.stages["generate_report"]["evidence_artifact"] = str(evidence_path)
 
         chart_path = None
         if validated.chart:
+            stage_started = time.monotonic()
             _notify(progress, "正在生成 K 线图…")
             chart_path = _create_chart(
                 validated.ticker,
@@ -174,8 +310,15 @@ def analyze_stock(
                 daily,
                 validated.date or "",
             )
+            run.complete_stage(
+                "render_chart",
+                elapsed_ms=_elapsed_ms(stage_started),
+                details={"artifact": str(chart_path)},
+            )
 
         _notify(progress, "分析完成")
+        run.finish()
+        _persist_run_record(run_store, run)
         return AnalysisResult(
             ticker=validated.ticker,
             stock_name=str(stock_info.get("name", "")),
@@ -185,11 +328,17 @@ def analyze_stock(
             chart_path=chart_path,
             tokens=tokens,
         )
-    except StockAnalysisError:
+    except StockAnalysisError as exc:
+        if run.outcome == "running":
+            run.fail(type(exc).__name__, _safe_error_message(exc))
+        _persist_run_record(run_store, run)
         raise
     except Exception as exc:
         logger.exception("Single-stock analysis failed")
-        raise StockAnalysisError(f"分析失败：{exc}", original=exc) from exc
+        wrapped = StockAnalysisError(f"分析失败：{exc}", original=exc)
+        run.fail(type(exc).__name__, _safe_error_message(wrapped))
+        _persist_run_record(run_store, run)
+        raise wrapped from exc
 
 
 def estimate_cost(usage: dict[str, Any]) -> float:
@@ -203,16 +352,20 @@ def estimate_cost(usage: dict[str, Any]) -> float:
     )
 
 
-def _create_llm_report(package: dict[str, Any], mode: str) -> tuple[Path, dict[str, Any]]:
-    from src.reports.knowledge_retriever import get_knowledge_context
+def _create_llm_report(
+    package: dict[str, Any],
+    mode: str,
+    *,
+    context: Mapping[str, Any] | None = None,
+) -> tuple[Path, dict[str, Any]]:
     from src.reports.llm_client import LLMClient
     from src.reports.renderer import render_report
 
+    context = context or _route_context(mode, package)
     llm = LLMClient()
     system_prompt = _load_system_prompt(mode)
-    kb_context = get_knowledge_context(mode)
-    if kb_context:
-        system_prompt += kb_context
+    if context.get("prompt_text"):
+        system_prompt += str(context["prompt_text"])
     llm_output = llm.generate(
         system_prompt,
         json.dumps(package, ensure_ascii=False, indent=2),
@@ -227,6 +380,12 @@ def _create_llm_report(package: dict[str, Any], mode: str) -> tuple[Path, dict[s
         tokens=usage,
     )
     return Path(output_path), usage
+
+
+def _route_context(mode: str, package: Mapping[str, Any]) -> dict[str, Any]:
+    from src.reports.context_router import route_context
+
+    return route_context(mode, package)
 
 
 def _load_system_prompt(mode: str) -> str:
@@ -269,3 +428,70 @@ def _is_configured_secret(value: str) -> bool:
 def _notify(callback: ProgressCallback | None, message: str) -> None:
     if callback:
         callback(message)
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.monotonic() - started_at) * 1000)
+
+
+def _safe_error_message(error: Exception) -> str:
+    """Keep credentials out of the local run record while retaining context."""
+    message = str(error)
+    message = re.sub(
+        r"(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+",
+        r"\1=<redacted>",
+        message,
+    )
+    return message[:500]
+
+
+def _persist_run_record(store: RunRecordStore, run: RunRecord) -> None:
+    try:
+        store.save(run)
+    except Exception as exc:
+        logger.warning("Unable to persist run record ({})", type(exc).__name__)
+
+
+def _load_previous_package(json_dir: Path, ticker: str) -> dict[str, Any] | None:
+    """Load the latest structured package, never a rendered LLM report."""
+    if not json_dir.exists():
+        return None
+    paths = sorted(
+        json_dir.glob(f"{ticker}_*.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for path in paths:
+        try:
+            package = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        stock = package.get("stock") if isinstance(package, dict) else None
+        if (
+            isinstance(package, dict)
+            and package.get("schema_version")
+            and package.get("run_id")
+            and isinstance(stock, dict)
+            and stock.get("code") == ticker
+        ):
+            return package
+    return None
+
+
+def _save_evidence_package(
+    json_dir: Path,
+    ticker: str,
+    run_id: str,
+    package: dict[str, Any],
+) -> Path | None:
+    """Persist the structured input used by an LLM report for future diffs."""
+    try:
+        json_dir.mkdir(parents=True, exist_ok=True)
+        path = json_dir / (
+            f"{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{run_id[:8]}_evidence.json"
+        )
+        path.write_text(json.dumps(package, ensure_ascii=False, indent=2), encoding="utf-8")
+        return path
+    except (OSError, TypeError, ValueError) as exc:
+        logger.warning("Unable to persist evidence package ({})", type(exc).__name__)
+        return None

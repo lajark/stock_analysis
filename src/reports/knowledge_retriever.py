@@ -2,11 +2,12 @@
 
 设计原则：
 - 不加载全部知识库（53KB），仅按需检索相关片段
-- 每次注入的额外内容控制在 ~3KB 以内
+- 每次注入的额外内容控制在 5KB 以内
 - 检索结果可缓存，同一天不重复读取
 """
 
 import re
+from typing import Any
 
 from src.runtime_paths import resource_root
 
@@ -85,40 +86,59 @@ def retrieve(analysis_mode: str, dimensions: list[str] | None = None) -> str:
     if dimensions is None:
         dimensions = _default_dimensions(analysis_mode)
 
-    # 按文件分组，避免重复读取
+    fragments = retrieve_fragments(dimensions)
+    combined = "\n\n---\n\n".join(fragment["text"] for fragment in fragments)
+    return combined[:5000]
+
+
+def retrieve_fragments(
+    dimensions: list[str],
+    *,
+    max_chars: int = 5000,
+    max_fragment_chars: int = 2000,
+) -> list[dict[str, Any]]:
+    """Return selected knowledge sections with stable IDs and truncation metadata."""
     file_contents: dict[str, str] = {}
-    results: list[str] = []
+    fragments: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    used_chars = 0
 
     for dim in dimensions:
         if dim not in DIMENSION_MAP:
             continue
         filename, section_title = DIMENSION_MAP[dim]
+        key = (filename, section_title)
+        if key in seen:
+            continue
+        seen.add(key)
 
         if filename not in file_contents:
             file_contents[filename] = _load_file(filename)
 
         content = file_contents[filename]
         section = _extract_section(content, section_title)
-        if section:
-            # 限制每段长度，避免过长
-            if len(section) > 2000:
-                section = section[:2000] + "\n\n...(已截断)"
-            results.append(section)
+        if not section or used_chars >= max_chars:
+            continue
 
-    # 去重
-    seen = set()
-    unique = []
-    for r in results:
-        if r not in seen:
-            seen.add(r)
-            unique.append(r)
+        remaining = max_chars - used_chars
+        limit = min(max_fragment_chars, remaining)
+        truncated = len(section) > limit
+        text = section[:limit]
+        if truncated and limit > 20:
+            text = text[:-20] + "\n\n...(已截断)"
+        fragments.append(
+            {
+                "id": f"{filename}#{section_title}",
+                "dimension": dim,
+                "filename": filename,
+                "section": section_title,
+                "text": text,
+                "truncated": truncated,
+            }
+        )
+        used_chars += len(text)
 
-    # 拼接，限制总长
-    combined = "\n\n---\n\n".join(unique)
-    if len(combined) > 5000:
-        combined = combined[:5000] + "\n\n...(知识库内容已按 Token 预算截断)"
-
-    return combined
+    return fragments
 
 
 def _default_dimensions(mode: str) -> list[str]:

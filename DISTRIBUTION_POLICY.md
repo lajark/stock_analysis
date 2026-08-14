@@ -16,7 +16,7 @@ primary_remote: "https://github.com/lajark/stock_analysis.git"
 mirror_remote: "https://gitee.com/li_nanqi/stock_analysis.git"
 workspace_dir: "../.workspace/"
 release_dir: "installer/"
-policy_scan_command: ""
+policy_scan_command: "python scripts/pre_push_scan.py --staged"
 ci_policy_job: ""
 ```
 
@@ -25,7 +25,7 @@ ci_policy_job: ""
 - GitHub 是主公开仓库，Gitee 是镜像。源码、配置、测试、运行资源和知识库必须一致；本项目允许一个已记录的首页文档例外：GitHub 的 `README.md` 使用英文，Gitee 的 `README.md` 使用中文。除该文件外，两端文件集合必须一致。
 - `stock_analysis/` 是后续开发与构建的唯一源码目录。
 - `../release/stock_analysis/` 是旧发布副本，属于 `LOCAL-ONLY`。完成仓库整合后不得继续在其中手工维护第二套源码。
-- `policy_scan_command` 和 `ci_policy_job` 当前尚未配置，因此任何“推送前扫描通过”或“CI 守门通过”均不得被声称为已完成。
+- `policy_scan_command` 已配置为本地基础扫描；`ci_policy_job` 仍未配置，因此本地扫描不能被表述为 CI 守门通过。
 - 本文件是项目分发边界的单一事实来源；`.gitignore`、构建脚本和未来 CI 只负责执行本政策。
 
 ---
@@ -72,11 +72,12 @@ ci_policy_job: ""
 - `knowledge_base/` 下的 Markdown 知识库：项目作者已确认内容为项目自有或作者自有文档的
   结构化派生内容，来源和许可记录见 `knowledge_base/README.md`。
 - `README.md`、`README_EN.md`、`常用命令.txt`：公开用户文档。
-- `LICENSE`、未来的 `THIRD_PARTY_NOTICES.md`、`CHANGELOG.md`。
+- `LICENSE`、`THIRD_PARTY_NOTICES.md`、未来的 `CHANGELOG.md`。
 - `.env.example`：只能包含字段名、公开接口地址、模型示例和明显的假值。
 - `.gitignore`、`pyproject.toml`、构建/Lint/类型检查配置。
 - `packaging/`、`scripts/build_windows.ps1`：不嵌入证书、签名密钥和本机绝对路径的发布配置。
 - `DISTRIBUTION_POLICY.md`：本政策本身可公开，便于贡献者遵守。
+- `THIRD_PARTY_NOTICES.md`、`scripts/generate_release_metadata.py`、`scripts/pre_push_scan.py`：发布附件所需的依赖通知、校验元数据和推送前基础扫描工具。
 
 公开源码中的示例股票代码、公开历史行情测试值不得关联用户真实持仓、交易账户或个人画像。
 
@@ -149,7 +150,7 @@ gitee   -> Gitee（镜像）
 
 ## 6. 推送前检查
 
-当前尚无自动策略扫描器，推送前至少人工完成：
+当前提供本地基础策略扫描器，但尚未配置专业 Secret Scanner 或 CI 守门；推送前仍至少人工完成：
 
 1. `git status --short`：逐个分类暂存和未跟踪文件。
 2. `git diff --cached --name-status`：确认仅包含 `PUBLIC` 文件。
@@ -159,8 +160,7 @@ gitee   -> Gitee（镜像）
 6. 运行项目测试、Ruff 和与改动相关的类型检查。
 7. 确认 GitHub/Gitee 目标仓库仍为预期的公开可见性。
 
-未来新增 `scripts/pre_push_scan.py` 和 CI 后，必须回填 §0 的命令和任务名，并将本地扫描与 CI
-设置为等价规则。在此之前，最低验收标准中的自动守门项保持“未完成”。
+未来新增 CI 后，必须回填 §0 的任务名，并将本地扫描与 CI 设置为等价规则。
 
 ---
 
@@ -222,8 +222,8 @@ Secret 泄露时：立即轮换/吊销凭据、暂停分发、确认暴露范围
 - 两份 PDF 派生知识库与作者自有原文核对一致；作者身份和公开许可已确认，继续以 Markdown
   形式公开是合适的，原始 PDF 无需进入仓库或安装包。
 - Windows GUI、打包脚本、知识库来源记录和 v1.1.0 双语发布说明尚未同步到上述远端；本次同步将按 §4 的 README 例外执行。
-- 当前没有策略扫描脚本和 CI 第二层守门。
-- 正式安装包发布流程尚缺自动生成的 Manifest、checksum 和第三方许可通知。
+- v1.1.0 基线当时没有策略扫描脚本和 CI 第二层守门。
+- v1.1.0 基线当时尚缺自动生成的 Manifest、checksum 和第三方许可通知；v1.2.0 已补齐本地生成工具和第三方通知文件。
 
 因此，v1.0.0 远端基线的范围评定为：**主体源码和知识库范围基本合适，但当时尚不满足下一次公开同步/Release 的完整分发要求。** 本次 v1.1.0 推送须先完成本地检查，并按 §4 的 README 语言例外同步。
 
@@ -242,6 +242,14 @@ Secret 泄露时：立即轮换/吊销凭据、暂停分发、确认暴露范围
 
 复核结论：两端产品文件树一致，差异仅为首页 `README.md` 的语言内容；`.env`、密钥、内部规划、缓存、输出、构建目录和安装包均未进入公开 Git 树。`README_EN.md`、中英文 v1.1.0 发布说明、LICENSE、知识库来源说明和分发规则均已在两端保留。该结果符合本政策 §4 的平台首页语言例外。
 
+### 9.2 v1.2.0 发布前收口
+
+- 版本目标：`v1.2.0`。
+- 本地已统一版本号、快捷方式说明、中英文发布说明和 Inno Setup 构建版本。
+- `THIRD_PARTY_NOTICES.md` 已加入源码和安装包；`scripts/generate_release_metadata.py` 可生成 checksum 与 release manifest，并默认拒绝脏工作区。
+- 当前候选源码仍包含未提交改动，尚未形成 `v1.2.0` Tag；候选安装器只能作为本地验证产物，不得直接公开发布。
+- 当前受限环境无法完成干净 Windows 11 安装冒烟，因此 Release Manifest 的 `release_ready` 必须保持为 `false`，直到提交、打 Tag 和实机验证完成。
+
 ## 10. 最低验收清单
 
 - [x] 仓库与 Release 可见性已定义。
@@ -250,7 +258,7 @@ Secret 泄露时：立即轮换/吊销凭据、暂停分发、确认暴露范围
 - [x] PDF 派生知识资料的作者身份、来源和公开许可已确认。
 - [x] GitHub 与 Gitee 的产品文件已同步；允许且仅允许 `README.md` 因平台语言不同而产生文档提交差异。
 - [ ] 本地开发仓库与旧发布副本已整合为单一 Git 工作流。
-- [ ] 推送前 Secret/路径扫描命令已实现。
+- [x] 推送前 Secret/路径扫描命令已实现。
 - [ ] CI 第二层分发守门已实现。
-- [ ] Release Manifest、checksum 和第三方许可通知已自动生成。
+- [x] Release Manifest/checksum 生成脚本和第三方许可通知已提供。
 - [ ] Windows 正式 Release 可追溯至同步后的源码 Tag。

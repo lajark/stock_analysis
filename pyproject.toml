@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stock_analysis"
-version = "1.1.0"
+version = "1.2.0"
 description = "个人股票分析工具 — 本地计算为主，LLM 仅用于报告生成"
 requires-python = ">=3.10"
 readme = "README.md"

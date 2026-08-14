@@ -1,6 +1,6 @@
 #define MyAppName "股票分析工具"
 #define MyAppEnglishName "StockAnalysis"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "stock_analysis"
 #define MyAppExeName "StockAnalysis.exe"
 
@@ -27,10 +27,11 @@ SetupLogging=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加选项："; Flags: unchecked
+Name: "desktopicon"; Description: "创建桌面快捷方式（默认）"; GroupDescription: "附加选项："
 
 [Files]
 Source: "..\dist\StockAnalysis\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

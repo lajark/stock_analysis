@@ -4,6 +4,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectDir = Split-Path -Parent $PSScriptRoot
+$ProjectMetadata = Get-Content (Join-Path $ProjectDir "pyproject.toml") -Raw
+if ($ProjectMetadata -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+    throw "Unable to read project version from pyproject.toml."
+}
+$AppVersion = $Matches[1]
+$InstallerPath = "installer\StockAnalysis-Setup-$AppVersion.exe"
 
 Push-Location $ProjectDir
 try {
@@ -28,10 +34,10 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Inno Setup compiler failed with exit code $LASTEXITCODE."
     }
-    if (-not (Test-Path "installer\StockAnalysis-Setup-1.1.0.exe")) {
+    if (-not (Test-Path $InstallerPath)) {
         throw "Installer compiler finished without creating the expected output file."
     }
-    Write-Host "Installer build completed: installer\StockAnalysis-Setup-1.1.0.exe"
+    Write-Host "Installer build completed: $InstallerPath"
 }
 finally {
     Pop-Location

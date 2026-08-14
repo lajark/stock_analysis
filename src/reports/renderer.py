@@ -23,8 +23,9 @@ REPORT_TEMPLATE = """# {{ stock_name }} ({{ stock_code }}) 股票分析报告
 | 趋势判断 | {{ technical.trend }} | MA排列 |
 | MACD | {{ technical.macd_status }} | DIF={{ technical.macd }} |
 | RSI | {{ technical.rsi }} | {{ technical.rsi_status }} |
-| KDJ-K/D/J | {{ technical.kdj_k }}/{{ technical.kdj_d }}/{{ technical.kdj_j }} | {{ technical.kdj_status }} |
-| 估值分位(1年) | {{ valuation.percentiles.price_percentile_1y }}% | {{ valuation.percentiles.level }} |
+| KDJ | {{ technical.kdj_k }}/{{ technical.kdj_d }}/{{ technical.kdj_j }} | — |
+| KDJ状态 | {{ technical.kdj_status }} | — |
+| 估值分位 | {{ valuation.percentiles.price_percentile_1y }}% | {{ valuation.percentiles.level }} |
 | 基本面评分 | {{ fundamental.score }} | {{ fundamental.score_label }} |
 | 风险等级 | {{ risk.risk_level.label }} | 评分 {{ risk.risk_level.score }} |
 
@@ -65,6 +66,16 @@ REPORT_TEMPLATE = """# {{ stock_name }} ({{ stock_code }}) 股票分析报告
 {{ llm_output }}
 
 ---
+
+{% if changes and changes.changed_count %}
+## 与上次结构化分析的变化
+
+| 字段 | 上次值 | 本次值 |
+|------|--------|--------|
+{% for change in changes.changes[:10] %}
+| {{ change.path }} | {{ change.before }} | {{ change.after }} |
+{% endfor %}
+{% endif %}
 
 ## 数据溯源
 
@@ -116,6 +127,7 @@ def render_report(
         valuation=package["valuation"],
         risk=package["risk"],
         price_levels=package.get("price_levels", {}),
+        changes=package.get("changes"),
         meta=meta,
         llm_output=llm_output,
         llm_model=llm_model,
