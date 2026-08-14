@@ -250,7 +250,7 @@ Secret 泄露时：立即轮换/吊销凭据、暂停分发、确认暴露范围
 - 共享产品提交为 `bbfeb1c848e559871b082ef2521b593685811c3e`，`v1.2.0` Tag 指向产品提交 `dfdbf58944f4af1a01e6b88648381c413601e959`；GitHub 与 Gitee 已完成同步，无需强制推送。
 - 历史清理后，所有可达提交的作者/提交者邮箱均为 `noreply` 形式；原含真实邮箱的 `e1ebe98` 已不在任何分支、Tag 或远程引用中。
 - GitHub `main` 保持英文 `README.md`；Gitee 仅增加 `README.md` 中文文档提交 `8b5ffc8`，其他产品文件与共享提交一致，符合 §4 的 README 语言例外。
-- 当前受限环境无法完成干净 Windows 11 安装冒烟，因此 Release Manifest 的 `release_ready` 仍为 `false`；候选安装器不得在实机验证前宣称为正式发布版。
+- 已在 Windows 11 25H2（Build 26200）的正常桌面用户上下文完成安装、快捷方式启动和卸载冒烟；Release Manifest 已更新为 `release_ready=true`。沙箱内的 `localappdata` 展开失败经对照确认仅由受限进程的 Shell Folder API 行为造成。
 
 ## 10. 最低验收清单
 
@@ -263,4 +263,4 @@ Secret 泄露时：立即轮换/吊销凭据、暂停分发、确认暴露范围
 - [x] 推送前 Secret/路径扫描命令已实现。
 - [ ] CI 第二层分发守门已实现。
 - [x] Release Manifest/checksum 生成脚本和第三方许可通知已提供。
-- [ ] Windows 正式 Release 在正常 Windows 11 环境完成安装、启动和快捷方式验证后发布。
+- [x] Windows 正式 Release 已在正常 Windows 11 环境完成安装、启动、快捷方式和卸载验证。

@@ -13,7 +13,7 @@
 - Test suite: 75 tests passed.
 - A Windows installer was rebuilt from the v1.2.0 configuration.
 - Static installer checks confirm both Start Menu and default desktop shortcuts.
-- A clean Windows 11 install/startup test remains required before public release; the current restricted environment cannot expand the `localappdata` shell folder during silent installation.
+- A clean Windows 11 25H2 (Build 26200) desktop-context smoke test completed successfully: install and uninstall returned exit code 0, the desktop and Start Menu shortcuts resolved to the installed executable, and launching from the desktop shortcut opened the GUI successfully.
 
 ## Distribution files
 
