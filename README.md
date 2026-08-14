@@ -1,168 +1,92 @@
-# stock_analysis — 个人股票分析工具
+# stock_analysis v1.1.0
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-30%20passed-brightgreen.svg)](tests/)
+个人股票分析工具：本地计算为主，LLM 仅用于报告生成。v1.1.0 新增极简 Windows 桌面界面和一键安装包，同时保留 CLI。
 
-> 本地计算为主，LLM 仅用于报告生成。手动触发，用完即停。
+## Windows 普通用户
 
-## 项目简介
+1. 下载 `StockAnalysis-Setup-1.1.0.exe` 并双击安装。
+2. 启动“股票分析工具”，在“API 设置”填写 Tushare Token。
+3. 需要 AI 中文报告时，再填写 LLM API Key、接口地址和模型。
+4. 回到“股票分析”，输入股票代码、选择模式并点击“开始分析”。
 
-`stock_analysis` 是一个个人股票分析工具，支持 A 股市场的技术分析、基本面评估、估值分析和风险判断。
+安装版不要求 Python。设置、缓存、日志和报告默认保存在 `%LOCALAPPDATA%\StockAnalysis\`；卸载不会自动删除用户数据。
 
-**核心设计原则**：
-- 所有数值计算在本地完成，零 Token 消耗
-- 大模型仅用于将结构化分析结果转化为自然语言报告
-- 单次 LLM 调用，成本约 CNY 0.02/次
-- 支持 `--no-llm` 模式，完全不消耗 Token
-
-## 快速开始
+## 开发者快速开始
 
 ```bash
-# 1. 克隆仓库
-git clone <repo-url>
-cd stock_analysis
-
-# 2. 安装依赖
 pip install -e .
-
-# 3. 配置密钥
 cp .env.example .env
 # 编辑 .env 填入 TUSHARE_TOKEN 和 LLM_API_KEY
 
-# 4. 运行分析
+# 启动桌面界面
+python -m src.app.gui
+
+# 或使用 CLI
 python -m src.app.cli analyze --ticker 600519 --mode trade
 ```
 
 ## 分析模式
 
-| 模式 | 命令 | 用途 | 模型 | Token |
-|------|------|------|------|-------|
-| `quick` | `--mode quick` | 快速扫描 | fast | ~3K |
-| `deep` | `--mode deep` | 深度分析+知识库 | pro | ~6K |
-| `value` | `--mode value` | 价值评估 | fast | ~3K |
-| `trade` | `--mode trade` | 交易决策 | fast | ~4K |
+| 模式 | 用途 | 说明 |
+|------|------|------|
+| `quick` | 快速扫描 | 基础技术面、基本面、估值和风险摘要 |
+| `deep` | 深度分析 | 增加知识库检索和更深的 LLM 解读 |
+| `value` | 价值评估 | 聚焦估值、安全边际和基本面 |
+| `trade` | 交易决策 | 支撑/阻力、目标价和置信度 |
 
-## 主要功能
+关闭界面中的“使用 AI 生成中文报告”或使用 `--no-llm`，即可零 Token 输出本地 JSON 分析包。
 
-- **10 个技术指标**：MA/MACD/RSI/KDJ/布林带/CCI/威廉/OBV/成交量比率
-- **基本面五维度评分**：收入趋势/盈利质量/ROE/偿债/成长性
-- **估值分位**：PE/PB/PS 当前值 + 1/3/5 年历史分位
-- **风险分析**：波动率/最大回撤/流动性三维评估
-- **价格水平**：支撑位/阻力位 + 3-6 个月目标价 + 置信度
-- **3 种评分策略**：默认均衡/保守稳健/激进增长
-- **知识库**：5 个分析知识库，深度模式按需检索
-- **可视化**：K 线图/技术指标图/多股对比图（Plotly）
-- **多股票对比**：横向比较 PE/RSI/买入置信度
-
-## 常用命令
+## 常用 CLI
 
 ```bash
-# 交易决策（含目标价位和置信度）
 python -m src.app.cli analyze --ticker 600519 --mode trade
-
-# 多股票对比
-python -m src.app.cli compare --tickers 600519,000858,002837
-
-# 生成 K 线图
-python -m src.app.cli analyze --ticker 600519 --mode trade --chart
-
-# 无 LLM 模式（仅输出 JSON，零 Token）
 python -m src.app.cli analyze --ticker 600519 --mode quick --no-llm
-
-# 查看历史和统计
+python -m src.app.cli analyze --ticker 600519 --mode trade --chart
+python -m src.app.cli compare --tickers 600519,000858,002837
 python -m src.app.cli history
 python -m src.app.cli cost
 ```
 
-详见 [常用命令.txt](常用命令.txt)
-
 ## 项目结构
 
-```
+```text
 stock_analysis/
-├── config/                      # 配置文件
-│   ├── settings.yaml            # 全局配置
-│   └── field_mapping.yaml       # 数据源字段映射
+├── config/                    # YAML 配置
 ├── src/
-│   ├── config.py                # 配置加载
-│   ├── errors.py                # 统一异常体系
-│   ├── data/                    # 数据层
-│   │   ├── providers/           #   数据源 (Tushare/AkShare)
-│   │   ├── cache.py             #   缓存管理
-│   │   ├── calendar.py          #   交易日历
-│   │   ├── validators.py        #   数据校验
-│   │   └── monitoring.py        #   调用监控
-│   ├── analysis/                # 分析层（纯本地计算）
-│   │   ├── indicators.py        #   10 个技术指标
-│   │   ├── fundamentals.py      #   基本面分析
-│   │   ├── valuation.py         #   估值分析
-│   │   ├── risk.py              #   风险分析
-│   │   ├── price_levels.py      #   价格水平/目标价
-│   │   ├── strategies.py        #   3 种策略
-│   │   ├── comparison.py        #   多股票对比
-│   │   └── package.py           #   分析包构建
-│   ├── reports/                 # 报告层
-│   │   ├── llm_client.py        #   LLM 客户端
-│   │   ├── knowledge_retriever.py # 知识库检索
-│   │   ├── renderer.py          #   报告渲染
-│   │   ├── charts.py            #   可视化图表
-│   │   └── prompts/             #   Prompt 模板 (4 个)
-│   └── app/                     # 应用入口
-│       ├── cli.py               #   CLI 命令
-│       └── history.py           #   历史记录
-├── knowledge_base/              # 知识库（5 文件）
-├── tests/                       # 测试 (30 tests)
-├── data/cache/                  # 数据缓存
-├── output/                      # 分析输出
-│   ├── reports/                 # Markdown 报告
-│   ├── json/                    # 分析包 JSON
-│   └── charts/                  # K 线图 HTML
-└── logs/                        # 运行日志
+│   ├── app/gui.py             # Tkinter 桌面入口
+│   ├── app/service.py         # GUI/CLI 共用分析服务
+│   ├── app/cli.py             # CLI 入口
+│   ├── data/                  # Tushare/AkShare、缓存和校验
+│   ├── analysis/              # 技术面、基本面、估值、风险和价格水平
+│   ├── reports/               # LLM、知识检索和 Markdown 报告
+│   └── runtime_paths.py       # 源码/打包运行路径
+├── knowledge_base/            # 结构化 Markdown 知识库
+├── packaging/                 # PyInstaller/Inno Setup 配置
+├── scripts/                   # Windows 构建脚本
+└── tests/                     # 单元测试
 ```
 
-## 依赖
+知识库中的策略 Markdown 来源和使用边界见 [knowledge_base/README.md](knowledge_base/README.md)。原始个人 PDF 不作为运行时资源分发。
 
-| 类别 | 依赖 | 说明 |
-|------|------|------|
-| 数据源 | tushare, akshare | A 股行情和财务数据 |
-| 数据处理 | pandas, numpy, duckdb, pyarrow | 数据分析和缓存 |
-| LLM | openai | OpenAI 兼容接口 |
-| CLI | typer, rich | 命令行界面 |
-| 配置 | pydantic, pydantic-settings, pyyaml, python-dotenv | 配置管理 |
-| 报告 | jinja2 | 模板渲染 |
-| 可视化 | plotly | 交互式图表 |
-| 日志 | loguru | 日志管理 |
-| 测试 | pytest, pytest-cov | 单元测试 |
+## Windows 发布构建
 
-## 配置
-
-### 数据源
-
-- **Tushare Pro**（推荐）：需注册获取 Token，注册地址：https://tushare.pro
-- **AkShare**（备用）：零注册，Tushare 不可用时自动降级
-
-### LLM
-
-支持任意 OpenAI 兼容接口的 LLM 供应商，通过 `.env` 配置：
-
-```bash
-# 阿里云百炼（默认）
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_MODEL=deepseek-v4-flash
-LLM_MODEL_DEEP=deepseek-v4-pro
+```powershell
+pip install -e ".[build]"
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
 ```
+
+程序目录输出到 `dist\StockAnalysis\`，安装程序输出到 `installer\StockAnalysis-Setup-1.1.0.exe`。构建依赖 Inno Setup 6。
 
 ## 测试
 
 ```bash
-pytest tests/ -v    # 30 tests, 0.2s
+pytest tests/ -v
 ```
 
-## 许可证
+当前测试覆盖配置持久化、股票代码校验、知识库检索和核心指标，共 43 项。
 
-MIT License. 仅供研究和辅助分析使用，不构成投资建议。
+## 分发与许可证
 
-## 免责声明
-
-本工具仅提供研究和辅助分析功能，所有分析结果仅供参考。投资有风险，入市需谨慎。
+- 分发边界见 [DISTRIBUTION_POLICY.md](DISTRIBUTION_POLICY.md)。
+- MIT License，详见 [LICENSE](LICENSE)。
+- 本工具仅供研究和辅助分析，不构成投资建议，不执行真实交易。

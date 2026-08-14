@@ -9,12 +9,8 @@
     python -m src.app.cli --stats
 """
 
-import json
 import sys
-import time
 from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
 import typer
 from loguru import logger
@@ -22,7 +18,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from src.app.service import MODES, AnalysisRequest, analyze_stock, validate_ticker
 from src.config import get_config
+from src.runtime_paths import user_data_root
 
 app = typer.Typer(
     name="stock-analysis",
@@ -57,13 +55,18 @@ def _main_callback(ctx: typer.Context):
 def _setup_logging(debug: bool = False):
     logger.remove()
     level = "DEBUG" if debug else "INFO"
+    log_dir = user_data_root() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     logger.add(
         sys.stderr,
         level=level,
-        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        format=(
+            "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | "
+            "<level>{message}</level>"
+        ),
     )
     logger.add(
-        "logs/analysis_{time:YYYY-MM-DD}.log",
+        log_dir / "analysis_{time:YYYY-MM-DD}.log",
         level="DEBUG",
         rotation="10 MB",
         retention="7 days",
@@ -72,21 +75,7 @@ def _setup_logging(debug: bool = False):
 
 
 def _validate_ticker(ticker: str) -> str:
-    ticker = ticker.strip().upper()
-    if not (ticker.endswith(".SH") or ticker.endswith(".SZ")):
-        if ticker.startswith("6"):
-            ticker = f"{ticker}.SH"
-        else:
-            ticker = f"{ticker}.SZ"
-    return ticker
-
-
-MODES = {
-    "quick": {"desc": "快速扫描", "model": "deepseek-v4-flash", "deep": False, "kb": False},
-    "deep": {"desc": "深度分析", "model": "deepseek-v4-pro", "deep": True, "kb": True},
-    "value": {"desc": "价值评估", "model": "deepseek-v4-flash", "deep": False, "kb": True},
-    "trade": {"desc": "交易决策", "model": "deepseek-v4-flash", "deep": False, "kb": True},
-}
+    return validate_ticker(ticker)
 
 
 # ------------------------------------------------------------------
@@ -124,7 +113,11 @@ def analyze(
         console.print("[red]请指定 --ticker 或 --tickers[/]")
         raise typer.Exit(1)
 
-    codes = [_validate_ticker(ticker)] if ticker else [_validate_ticker(t.strip()) for t in tickers.split(",")]
+    codes = (
+        [_validate_ticker(ticker)]
+        if ticker
+        else [_validate_ticker(t.strip()) for t in tickers.split(",")]
+    )
 
     if mode not in MODES:
         console.print(f"[red]未知模式: {mode}，可用: {', '.join(MODES.keys())}[/]")
@@ -134,10 +127,13 @@ def analyze(
         date = datetime.now().strftime("%Y-%m-%d")
 
     mode_info = MODES[mode]
-    console.print(Panel.fit(
-        f"[bold cyan]{mode_info['desc']}[/] | {len(codes)} 只股票 | 日期: {date} | 模型: {mode_info['model']}",
-        title="stock_analysis",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold cyan]{mode_info['desc']}[/] | {len(codes)} 只股票 | "
+            f"日期: {date} | 模型: {mode_info['model']}",
+            title="stock_analysis",
+        )
+    )
 
     for i, code in enumerate(codes):
         if len(codes) > 1:
@@ -145,117 +141,38 @@ def analyze(
         _analyze_single(code, date, mode, mode_info, no_llm, chart)
 
 
-def _analyze_single(code: str, date: str, mode: str, mode_info: dict, no_llm: bool, chart: bool = False):
+def _analyze_single(
+    code: str,
+    date: str,
+    mode: str,
+    mode_info: dict,
+    no_llm: bool,
+    chart: bool = False,
+):
     """分析单只股票。"""
-    config = get_config()
-    t0 = time.time()
-
-    # 1. 数据获取
-    console.print("[dim]获取数据...[/]", end=" ")
-    from src.data.providers.tushare import TushareProvider
-
     try:
-        provider = TushareProvider()
-        stock_info = provider.get_stock_basic(code)
-        daily = provider.get_daily(code, "20240101", date)
-        if daily.empty:
-            console.print(f"[red]失败: {code} 无日线数据[/]")
-            return
-        daily_basic = provider.get_daily_basic(code, date)
-        income = provider.get_income(code, "20220101", date)
-        balance_sheet = provider.get_balance_sheet(code, "20220101", date)
-        cashflow = provider.get_cashflow(code, "20220101", date)
-        fina_indicator = provider.get_fina_indicator(code, "20220101", date)
+        result = analyze_stock(
+            AnalysisRequest(
+                ticker=code,
+                date=date,
+                mode=mode,
+                use_llm=not no_llm,
+                chart=chart,
+            ),
+            progress=lambda message: console.print(f"[dim]{message}[/]"),
+        )
     except Exception as e:
         console.print(f"[red]失败: {e}[/]")
         return
-
-    console.print(f"[green]OK[/] ({len(daily)} 日线)")
-
-    # 2. 构建分析包
-    console.print("[dim]分析中...[/]", end=" ")
-    from src.analysis.package import build_analysis_package, package_size
-
-    package = build_analysis_package(
-        stock_info=stock_info, daily=daily, daily_basic=daily_basic,
-        income=income, balance_sheet=balance_sheet, cashflow=cashflow,
-        fina_indicator=fina_indicator, analysis_date=date,
-    )
-    pkg_size = package_size(package)
-    console.print(f"[green]OK[/] ({pkg_size} bytes)")
-
-    # 3. 无 LLM 模式
-    if no_llm:
-        from src.analysis.package import package_to_json
-        output_path = config.json_dir / f"{code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        config.json_dir.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(package_to_json(package), encoding="utf-8")
-        console.print(f"  [green]JSON -> {output_path}[/]")
-
-        # 图表生成（即使无 LLM 也可生成）
-        if chart:
-            _generate_chart(code, stock_info, daily, date, config)
-        return
-
-    # 4. LLM 调用
-    console.print("[dim]LLM 生成中...[/]", end=" ")
-    from src.reports.llm_client import LLMClient
-    from src.reports.knowledge_retriever import get_knowledge_context
-
-    llm = LLMClient()
-    system_prompt = _load_system_prompt(mode)
-    kb_context = get_knowledge_context(mode)
-    if kb_context:
-        system_prompt = system_prompt + kb_context
-    user_prompt = json.dumps(package, ensure_ascii=False, indent=2)
-    llm_output = llm.generate(system_prompt, user_prompt, deep=mode_info["deep"])
-    usage = llm.last_usage or {}
-    console.print(f"[green]OK[/] ({usage.get('total_tokens', 0)} tokens)")
-
-    # 5. 渲染报告
-    from src.reports.renderer import render_report
-    output_path = render_report(
-        package=package, llm_output=llm_output,
-        llm_model=usage.get("model", config.llm_model), tokens=usage,
-    )
-
-    # 6. 记录历史
-    from src.app.history import AnalysisHistory
-    cost = _estimate_cost(usage)
-    AnalysisHistory().add(
-        ticker=code, name=stock_info["name"], mode=mode,
-        report_path=output_path, tokens=usage, cost=cost or 0.0, date=date,
-    )
-
-    # 7. 完成
-    elapsed = time.time() - t0
-    console.print(f"  [green]报告 -> {output_path}[/]")
-    if cost:
-        console.print(f"  [dim]Token: {usage.get('input_tokens', 0)}+{usage.get('output_tokens', 0)} "
-                       f"| 费用: CNY {cost:.4f} | 耗时: {elapsed:.1f}s[/]")
-
-    # 7. 图表（可选）
-    if chart:
-        _generate_chart(code, stock_info, daily, date, config)
-
-
-def _generate_chart(code: str, stock_info: dict, daily: "pd.DataFrame", date: str, config) -> str:  # noqa: F821
-    """生成 K 线技术分析图。"""
-    console.print("[dim]生成图表...[/]", end=" ")
-    from src.analysis.indicators import calc_all_indicators
-    from src.reports.charts import create_kline_chart
-
-    daily_with_ind = calc_all_indicators(daily)
-    chart_name = f"{code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_kline.html"
-    chart_path = str(config.output_dir / "charts" / chart_name)
-    (config.output_dir / "charts").mkdir(parents=True, exist_ok=True)
-    create_kline_chart(
-        daily_with_ind,
-        title=f"{stock_info['name']} ({code}) - {date}",
-        output_path=chart_path,
-    )
-    console.print(f"[green]OK -> {chart_path}[/]")
-    return chart_path
+    output_label = "报告" if result.output_kind == "report" else "JSON"
+    console.print(f"  [green]{output_label} -> {result.output_path}[/]")
+    if result.chart_path:
+        console.print(f"  [green]图表 -> {result.chart_path}[/]")
+    if result.tokens:
+        console.print(
+            f"  [dim]Token: {result.tokens.get('input_tokens', 0)}+"
+            f"{result.tokens.get('output_tokens', 0)} | 耗时: {result.elapsed_seconds:.1f}s[/]"
+        )
 
 
 # ------------------------------------------------------------------
@@ -372,9 +289,10 @@ def compare(
     ),
 ):
     """多股票横向对比分析。"""
-    from src.data.providers.tushare import TushareProvider
-    from src.analysis.comparison import compare_stocks
     from rich.table import Table
+
+    from src.analysis.comparison import compare_stocks
+    from src.data.providers.tushare import TushareProvider
 
     codes = [_validate_ticker(t.strip()) for t in tickers.split(",")]
     if date is None:
@@ -444,11 +362,13 @@ def compare(
 
     # 图表
     if chart:
+        config = get_config()
         console.print("[dim]生成对比图...[/]", end=" ")
         from src.reports.charts import create_comparison_chart
 
         daily_data = {f"{d['info']['name']}({c})": d["daily"] for c, d in stocks_data.items()}
-        chart_path = str(config.output_dir / "charts" / f"compare_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+        chart_name = f"compare_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        chart_path = str(config.output_dir / "charts" / chart_name)
         (config.output_dir / "charts").mkdir(parents=True, exist_ok=True)
         create_comparison_chart(daily_data, title=f"走势对比 - {date}", output_path=chart_path)
         console.print(f"[green]OK -> {chart_path}[/]")
@@ -494,26 +414,6 @@ def cost():
         console.print("\n[bold]最常分析:[/]")
         for ticker, count in list(s["by_ticker"].items())[:5]:
             console.print(f"  {ticker}: {count} 次")
-
-
-# ------------------------------------------------------------------
-# 工具函数
-# ------------------------------------------------------------------
-def _load_system_prompt(mode: str) -> str:
-    prompt_dir = Path(__file__).resolve().parent.parent / "reports" / "prompts"
-    prompt_file = prompt_dir / f"{mode}_scan.md"
-    if not prompt_file.exists():
-        prompt_file = prompt_dir / "quick_scan.md"
-    return prompt_file.read_text(encoding="utf-8")
-
-
-def _estimate_cost(usage: dict) -> float | None:
-    if not usage:
-        return None
-    input_price = 2.0 / 1_000_000
-    output_price = 8.0 / 1_000_000
-    cost = usage.get("input_tokens", 0) * input_price + usage.get("output_tokens", 0) * output_price
-    return round(cost, 4)
 
 
 if __name__ == "__main__":
