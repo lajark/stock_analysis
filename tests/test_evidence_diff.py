@@ -31,3 +31,43 @@ def test_evidence_diff_rejects_different_tickers() -> None:
 
     assert result["compatible"] is False
     assert result["changes"] == []
+
+
+def test_evidence_diff_ignores_stale_changes_key_and_list_tuple_noise() -> None:
+    """Regression: a stale ``changes`` key in the JSON-loaded previous package
+    must not be recorded as a whole-structure diff (recursive nesting), and
+    list→tuple differences from JSON round-trips must be suppressed."""
+    previous = _package("run-1", 10.0)
+    previous["changes"] = {
+        "compatible": True,
+        "changed_count": 99,
+        "changes": [{"path": "old", "before": "x", "after": "y"}],
+    }
+    previous["decision"] = {
+        "status": "conditional_positive",
+        "conditions": ["cond A"],
+        "unresolved_conflicts": ["old conflict"],
+        "supporting_evidence": [],
+        "opposing_evidence": [],
+        "invalidation_conditions": [],
+    }
+    current = _package("run-2", 10.0)
+    current["decision"] = {
+        "status": "conditional_positive",
+        "conditions": ("cond A",),  # tuple vs list in previous
+        "unresolved_conflicts": ["new conflict"],
+        "supporting_evidence": [],
+        "opposing_evidence": [],
+        "invalidation_conditions": [],
+    }
+
+    result = compare_evidence_packages(previous, current)
+
+    # The stale "changes" key in previous must not be recorded.
+    changes_paths = [c["path"] for c in result["changes"]]
+    assert "changes" not in changes_paths, "stale changes key leaked into diff"
+    # list-vs-tuple for unchanged "conditions" must be suppressed.
+    assert "decision.conditions" not in changes_paths, "list-vs-tuple noise leaked"
+    # Only the real change (unresolved_conflicts: old vs new) should remain.
+    assert "decision.unresolved_conflicts" in changes_paths
+    assert result["changed_count"] == 1

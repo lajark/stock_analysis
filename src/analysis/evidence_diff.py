@@ -61,14 +61,31 @@ def _diff_mapping(
         for key in sorted(set(previous) | set(current), key=str):
             child = f"{path}.{key}" if path else str(key)
             if key not in previous or key not in current:
-                changes.append(
-                    {"path": child, "before": previous.get(key), "after": current.get(key)}
-                )
+                # A key missing on one side must still respect the ignore list:
+                # otherwise a stale "changes" key present only in the JSON-loaded
+                # previous package would be recorded whole, recursively nesting
+                # previous diffs into the current one.
+                if not _ignored(child):
+                    changes.append(
+                        {"path": child, "before": previous.get(key), "after": current.get(key)}
+                    )
             else:
                 _diff_mapping(previous[key], current[key], child, changes, max_changes)
         return
-    if previous != current:
+    if not _values_equal(previous, current):
         changes.append({"path": path, "before": previous, "after": current})
+
+
+def _values_equal(a: Any, b: Any) -> bool:
+    """Compare two leaf values, treating equal list/tuple contents as equal.
+
+    JSON round-trips turn in-memory tuples into lists, so a list-vs-tuple
+    difference is an artifact of serialization rather than a real evidence
+    change; without this the change table is flooded with spurious rows.
+    """
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return list(a) == list(b)
+    return a == b
 
 
 def _ignored(path: str) -> bool:
