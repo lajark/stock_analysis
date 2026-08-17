@@ -17,7 +17,7 @@ mirror_remote: "https://gitee.com/li_nanqi/stock_analysis.git"
 workspace_dir: "../.workspace/"
 release_dir: "installer/"
 policy_scan_command: "python scripts/pre_push_scan.py --staged"
-ci_policy_job: ""
+ci_policy_job: "ci-lint-test-build-smoke"
 ```
 
 说明：
@@ -25,7 +25,7 @@ ci_policy_job: ""
 - GitHub 是主公开仓库，Gitee 是镜像。源码、配置、测试、运行资源和知识库必须一致；本项目允许一个已记录的首页文档例外：GitHub 的 `README.md` 使用英文，Gitee 的 `README.md` 使用中文。除该文件外，两端文件集合必须一致。
 - `stock_analysis/` 是后续开发与构建的唯一源码目录。
 - `../release/stock_analysis/` 是旧发布副本，属于 `LOCAL-ONLY`。完成仓库整合后不得继续在其中手工维护第二套源码。
-- `policy_scan_command` 已配置为本地基础扫描；`ci_policy_job` 仍未配置，因此本地扫描不能被表述为 CI 守门通过。
+- `policy_scan_command` 已配置为本地基础扫描；`ci_policy_job` 已配置为 `ci-lint-test-build-smoke`（GitHub Actions，含与本地 `pre_push_scan.py` 等价的扫描步骤）。CI 无远程发布能力，正式 Release 上传仍需另行授权。
 - 本文件是项目分发边界的单一事实来源；`.gitignore`、构建脚本和未来 CI 只负责执行本政策。
 
 ---
@@ -160,7 +160,7 @@ gitee   -> Gitee（镜像）
 6. 运行项目测试、Ruff 和与改动相关的类型检查。
 7. 确认 GitHub/Gitee 目标仓库仍为预期的公开可见性。
 
-未来新增 CI 后，必须回填 §0 的任务名，并将本地扫描与 CI 设置为等价规则。
+已新增 `.github/workflows/ci.yml`（`ci-lint-test-build-smoke`：Ruff/Mypy 维护集门、全量离线测试、PyInstaller 构建烟测、`pre_push_scan.py` 等价扫描），并与本地 `scripts/ci.ps1` 镜像保持等价规则；Tag 构建与 Release 上传分离，远程发布须另行授权。
 
 ---
 
@@ -261,6 +261,6 @@ Secret 泄露时：立即轮换/吊销凭据、暂停分发、确认暴露范围
 - [x] GitHub 与 Gitee 的产品文件已同步；允许且仅允许 `README.md` 因平台语言不同而产生文档提交差异。
 - [ ] 本地开发仓库与旧发布副本已整合为单一 Git 工作流。
 - [x] 推送前 Secret/路径扫描命令已实现。
-- [ ] CI 第二层分发守门已实现。
+- [x] CI 第二层分发守门已实现（`.github/workflows/ci.yml` `ci-lint-test-build-smoke`，与本地 `scripts/ci.ps1` 等价；无 secrets/上传能力，Tag 发布仍需另行授权）。
 - [x] Release Manifest/checksum 生成脚本和第三方许可通知已提供。
 - [x] Windows 正式 Release 已在正常 Windows 11 环境完成安装、启动、快捷方式和卸载验证。

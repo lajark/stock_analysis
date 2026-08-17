@@ -54,3 +54,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "integration: real-provider/network contract tests; opt-in (set TUSHARE_TOKEN or run with -m integration)",
+    "network: tests that perform real network access",
+]

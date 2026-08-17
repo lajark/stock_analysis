@@ -1,0 +1,101 @@
+# CI — lint / test / build-smoke（与 scripts/ci.ps1 等价，目标清单严禁漂移）。
+#
+# 守门范围：T-7.7/7.8/9 维护的源码 + 本任务新增测试（"维护集"）；全树存量
+# lint/mypy 债记入 DISTRIBUTION_POLICY 基线，期外另项清理。
+# 集成契约测试（test_provider_contracts.py）opt-in：默认 `-m "not integration"` 排除，
+# 由有 TUSHARE_TOKEN 的环境显式执行。
+# 无 secrets/上传能力；build-smoke 产物 retention 1 天的临时制品，不发布 Release。
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md"]
+  pull_request:
+    branches: [main]
+    paths-ignore: ["**/*.md"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dev dependencies
+        run: pip install -e '.[dev]'
+      # Ruff + Mypy 目标集合必须与 scripts/ci.ps1 中 $RuffTargets/$MypyTargets 一致。
+      - name: Ruff (maintained set)
+        run: >-
+          python -m ruff check
+          src/data/cache.py src/data/rate_limit.py src/data/providers/tushare.py
+          src/config.py src/reports/llm_client.py src/app/run_records.py
+          src/reports/renderer.py src/app/service.py src/app/cli.py src/app/gui.py
+          src/analysis/backtest.py
+          tests/test_backtest_budget.py tests/test_llm_stream.py
+          tests/test_app_cli.py tests/test_gui_worker.py
+          tests/test_providers_retry.py tests/test_cache_corrupt.py
+          tests/test_provider_contracts.py tests/test_concurrency.py
+          tests/test_app_cancel.py
+      - name: Mypy (maintained set)
+        run: >-
+          python -m mypy
+          src/data/cache.py src/data/rate_limit.py src/data/providers/tushare.py
+          src/config.py src/reports/llm_client.py src/app/run_records.py
+          src/reports/renderer.py src/app/service.py src/app/cli.py src/app/gui.py
+          src/analysis/backtest.py
+          --follow-imports=skip --ignore-missing-imports
+      - name: Pre-push scan (local boundary equivalence)
+        shell: pwsh
+        run: python scripts/pre_push_scan.py
+
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dev dependencies
+        run: pip install -e '.[dev]'
+      - name: Pytest (offline suite; integration gated out)
+        run: >-
+          python -m pytest -m "not integration" -p no:cacheprovider
+          --basetemp "$env:RUNNER_TEMP/pytest"
+
+  build-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build dependencies
+        run: pip install -e '.[dev,build]'
+      - name: PyInstaller onedir build (no installer)
+        run: ./scripts/build_windows.ps1 -SkipInstaller
+      - name: Assert application executable exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/StockAnalysis/StockAnalysis.exe")) {
+            throw "dist/StockAnalysis/StockAnalysis.exe was not produced"
+          }
+      - name: Pre-push scan after untracked build artifacts (dist must stay ignored)
+        shell: pwsh
+        run: python scripts/pre_push_scan.py
+      - name: Upload build artifact (ephemeral, not a release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-analysis-build-${{ github.sha }}
+          path: "dist/"
+          retention-days: 1
