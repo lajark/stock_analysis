@@ -97,6 +97,37 @@ REPORT_TEMPLATE = """# {{ stock_name }} ({{ stock_code }}) 股票分析报告
 """
 
 
+def _shorten_change_values(changes: Any, limit: int = 150) -> Any:
+    """Return a copy of ``changes`` whose before/after values are truncated.
+
+    A whole evidence list can differ in just a few fields; dumping the full
+    Python repr into a Markdown table cell makes the report unreadable, so
+    oversized values are cut to ``limit`` characters with a trailing ellipsis.
+    """
+    if not isinstance(changes, dict):
+        return changes
+    rendered = []
+    for change in changes.get("changes", []):
+        if not isinstance(change, dict):
+            rendered.append(change)
+            continue
+        rendered.append(
+            {
+                **change,
+                "before": _truncate(change.get("before"), limit),
+                "after": _truncate(change.get("after"), limit),
+            }
+        )
+    return {**changes, "changes": rendered}
+
+
+def _truncate(value: Any, limit: int) -> str:
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
 def render_report(
     package: dict[str, Any],
     llm_output: str,
@@ -122,6 +153,10 @@ def render_report(
     stock = package["stock"]
     meta = package["meta"]
 
+    # Truncate oversized change values so the change table stays readable
+    # (e.g. whole evidence lists that differ only in a few fields).
+    changes = _shorten_change_values(package.get("changes"))
+
     report = template.render(
         stock_name=stock["name"],
         stock_code=stock["code"],
@@ -133,7 +168,7 @@ def render_report(
         valuation=package["valuation"],
         risk=package["risk"],
         price_levels=package.get("price_levels", {}),
-        changes=package.get("changes"),
+        changes=changes,
         meta=meta,
         llm_output=llm_output,
         llm_model=llm_model,

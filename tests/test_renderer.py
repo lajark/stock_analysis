@@ -29,8 +29,11 @@ def test_renderer_displays_structured_changes(tmp_path) -> None:
         "risk": {"risk_level": {"label": "中等风险", "score": 50}},
         "price_levels": {},
         "changes": {
-            "changed_count": 1,
-            "changes": [{"path": "technical.close", "before": 9, "after": 10}],
+            "changed_count": 2,
+            "changes": [
+                {"path": "technical.close", "before": 9, "after": 10},
+                {"path": "decision.supporting_evidence", "before": "x" * 500, "after": "y" * 500},
+            ],
         },
     }
 
@@ -46,3 +49,6 @@ def test_renderer_displays_structured_changes(tmp_path) -> None:
     report = output_path.read_text(encoding="utf-8")
     assert "与上次结构化分析的变化" in report
     assert "technical.close" in report
+    # Oversized change values must be truncated so the table stays readable.
+    assert "x" * 500 not in report
+    assert "y" * 500 not in report
