@@ -90,3 +90,22 @@ def test_validation_gate_blocks_financial_data_from_the_future() -> None:
     assert result.status == "block"
     assert result.allow_llm is False
     assert any("未来数据" in reason for reason in result.blocking_reasons)
+
+
+def test_validation_gate_blocks_future_announcement_revision() -> None:
+    future = pd.DataFrame(
+        {
+            "end_date": pd.to_datetime(["2025-12-31"]),
+            "ann_date": pd.to_datetime(["2026-09-01"]),
+        }
+    )
+    result = validate_analysis_inputs(
+        run_id="run-future-announcement",
+        ticker="600519.SH",
+        requested_date="2026-08-14",
+        daily=_daily(),
+        datasets={"income": future},
+    )
+
+    assert result.status == "block"
+    assert any("未来信息泄漏" in reason for reason in result.blocking_reasons)

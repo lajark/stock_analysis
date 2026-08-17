@@ -15,7 +15,11 @@ from src.analysis.contracts import (
 def test_build_analysis_package_adds_contract_metadata_without_breaking_shape(monkeypatch) -> None:
     import src.analysis.package as package_module
 
-    monkeypatch.setattr(package_module, "calc_all_indicators", lambda frame: frame)
+    monkeypatch.setattr(
+        package_module,
+        "calc_all_indicators",
+        lambda frame, _parameters=None: frame,
+    )
     monkeypatch.setattr(package_module, "summarize_indicators", lambda frame: {"trend": "上升"})
     monkeypatch.setattr(package_module, "analyze_fundamentals", lambda *args: {"score": 70})
     monkeypatch.setattr(package_module, "analyze_valuation", lambda *args: {"level": "合理"})
@@ -33,6 +37,17 @@ def test_build_analysis_package_adds_contract_metadata_without_breaking_shape(mo
         fina_indicator=pd.DataFrame(),
         analysis_date="2026-08-14",
         run_id="run-package",
+        external_sentiment_evidence=[
+            {
+                "evidence_id": "news.package",
+                "polarity": "positive",
+                "claim": "外部结构化事件",
+                "source": "licensed_news-v1",
+                "as_of": "2026-08-14",
+                "strength": 0.5,
+                "reliability": 0.6,
+            }
+        ],
         dataset_quality={"daily": "stale"},
         data_warnings=["income unavailable"],
         validation={"status": "degraded", "confidence_cap": 60},
@@ -46,6 +61,7 @@ def test_build_analysis_package_adds_contract_metadata_without_breaking_shape(mo
     assert "daily" in result["data_gaps"]
     assert result["data_warnings"] == ["income unavailable"]
     assert result["validation"]["confidence_cap"] == 60
+    assert result["sentiment"]["external"]["accepted_count"] == 1
     assert "scenarios" in result
     assert "invalidation_conditions" in result
 
@@ -59,6 +75,17 @@ def test_build_analysis_package_adds_contract_metadata_without_breaking_shape(mo
         fina_indicator=pd.DataFrame(),
         analysis_date="2026-08-14",
         run_id="run-package-2",
+        external_sentiment_evidence=[
+            {
+                "evidence_id": "news.package",
+                "polarity": "positive",
+                "claim": "外部结构化事件",
+                "source": "licensed_news-v1",
+                "as_of": "2026-08-14",
+                "strength": 0.5,
+                "reliability": 0.6,
+            }
+        ],
         dataset_quality={"daily": "stale"},
         data_warnings=["income unavailable"],
         validation={"status": "degraded", "confidence_cap": 60},

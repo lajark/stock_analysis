@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pandas as pd
 import pytest
 
@@ -41,8 +43,30 @@ class FakeProvider:
     def get_daily(self, code: str, start_date: str, end_date: str):
         return self._call("get_daily", _daily())
 
+    def get_adj_factor(self, code: str, start_date: str, end_date: str):
+        return self._call(
+            "get_adj_factor",
+            pd.DataFrame(
+                {
+                    "trade_date": [pd.Timestamp("2026-08-13"), pd.Timestamp("2026-08-14")],
+                    "adj_factor": [2.0, 4.0],
+                }
+            ),
+        )
+
     def get_daily_basic(self, code: str, trade_date: str):
         return self._call("get_daily_basic", {"pe_ttm": 20.0})
+
+    def get_moneyflow(self, code: str, start_date: str, end_date: str):
+        return self._call(
+            "get_moneyflow",
+            pd.DataFrame(
+                {
+                    "trade_date": ["2026-08-13", "2026-08-15"],
+                    "net_mf_amount": [100.0, 200.0],
+                }
+            ),
+        )
 
     def get_income(self, code: str, start_date: str, end_date: str):
         return self._call("get_income", pd.DataFrame({"end_date": [pd.Timestamp("2025-12-31")]}))
@@ -63,6 +87,8 @@ class FakeCache:
         self.fresh = fresh
         self.saved_daily: list[pd.DataFrame] = []
         self.financials: dict[str, pd.DataFrame] = {}
+        self.moneyflow: pd.DataFrame | None = None
+        self.adjustments: pd.DataFrame | None = None
         self.meta: dict[str, dict[str, str]] = {}
 
     def get_daily(self, code: str, start_date: str, end_date: str):
@@ -79,6 +105,18 @@ class FakeCache:
 
     def save_financials(self, code: str, report_type: str, value: pd.DataFrame) -> None:
         self.financials[report_type] = value
+
+    def get_moneyflow(self, code: str, start_date: str, end_date: str):
+        return self.moneyflow
+
+    def save_moneyflow(self, code: str, value: pd.DataFrame) -> None:
+        self.moneyflow = value
+
+    def get_adj_factor(self, code: str, start_date: str, end_date: str):
+        return self.adjustments
+
+    def save_adj_factor(self, code: str, value: pd.DataFrame, source: str = "") -> None:
+        self.adjustments = value
 
     def get_meta(self, cache_key: str):
         return self.meta.get(cache_key)
@@ -158,3 +196,75 @@ def test_gateway_uses_fresh_financial_cache() -> None:
     assert result.providers["income"] == "cache"
     assert result.income.equals(cached_income)
     assert "get_income" not in primary.calls
+
+
+def test_gateway_filters_future_moneyflow_and_records_source() -> None:
+    primary = FakeProvider("tushare")
+    gateway = DataGateway(primary=primary, fallback=None, cache=FakeCache())
+
+    result = gateway.fetch_market_data("600519.SH", "2026-08-01", "2026-08-14")
+
+    assert result.providers["moneyflow"] == "tushare"
+    assert result.quality["moneyflow"] == "ok"
+    assert result.moneyflow["trade_date"].max() == pd.Timestamp("2026-08-13")
+    assert "get_moneyflow" in primary.calls
+
+
+def test_gateway_applies_requested_qfq_and_records_adjustment_source() -> None:
+    primary = FakeProvider("tushare")
+    gateway = DataGateway(primary=primary, fallback=None, cache=FakeCache())
+
+    result = gateway.fetch_market_data(
+        "600519.SH", "2026-08-01", "2026-08-14", adjustment="qfq"
+    )
+
+    assert result.adjustment == "qfq"
+    assert result.providers["adj_factor"] == "tushare"
+    assert result.daily.loc[0, "close"] == pytest.approx(5.25)
+
+
+def test_gateway_uses_fresh_adjustment_cache_before_provider_call() -> None:
+    primary = FakeProvider("tushare")
+    cache = FakeCache()
+    cache.adjustments = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2026-08-13", "2026-08-14"]),
+            "adj_factor": [2.0, 4.0],
+        }
+    )
+    cache.meta["adjustments/600519.SH"] = {
+        "updated_at": datetime.now().isoformat(),
+    }
+    gateway = DataGateway(primary=primary, fallback=None, cache=cache)
+
+    result = gateway.fetch_market_data(
+        "600519.SH", "2026-08-13", "2026-08-14", adjustment="qfq"
+    )
+
+    assert result.providers["adj_factor"] == "cache"
+    assert result.quality["adj_factor"] == "ok"
+    assert "get_adj_factor" not in primary.calls
+    assert result.daily.loc[0, "close"] == pytest.approx(5.25)
+
+
+def test_gateway_can_use_complete_stale_adjustment_cache_as_explicit_fallback() -> None:
+    primary = FakeProvider("tushare", fail={"get_adj_factor"})
+    cache = FakeCache()
+    cache.adjustments = pd.DataFrame(
+        {
+            "trade_date": pd.to_datetime(["2026-08-13", "2026-08-14"]),
+            "adj_factor": [2.0, 4.0],
+        }
+    )
+    cache.meta["adjustments/600519.SH"] = {
+        "updated_at": (datetime.now() - timedelta(days=3)).isoformat(),
+    }
+    gateway = DataGateway(primary=primary, fallback=None, cache=cache)
+
+    result = gateway.fetch_market_data(
+        "600519.SH", "2026-08-13", "2026-08-14", adjustment="qfq"
+    )
+
+    assert result.providers["adj_factor"] == "cache"
+    assert result.quality["adj_factor"] == "stale"
+    assert any("过期的缓存" in warning for warning in result.warnings)
