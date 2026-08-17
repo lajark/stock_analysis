@@ -24,7 +24,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Install dev dependencies
@@ -62,7 +62,7 @@ jobs:
         python-version: ["3.10", "3.11"]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dev dependencies
@@ -77,7 +77,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Install build dependencies
@@ -94,7 +94,7 @@ jobs:
         shell: pwsh
         run: python scripts/pre_push_scan.py
       - name: Upload build artifact (ephemeral, not a release)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: stock-analysis-build-${{ github.sha }}
           path: "dist/"
