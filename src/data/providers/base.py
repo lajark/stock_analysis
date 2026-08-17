@@ -65,6 +65,16 @@ class DataProvider(ABC):
         """
         ...
 
+    def get_moneyflow(
+        self, code: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
+        """获取历史资金流（可选能力，缺失时返回空表）。
+
+        资金流不是所有降级数据源都提供；使用非抽象默认实现可让网关
+        显式记录 ``partial``，而不是破坏行情和基本面主链路。
+        """
+        return pd.DataFrame()
+
     @abstractmethod
     def get_income(
         self, code: str, start_date: str, end_date: str
@@ -72,7 +82,9 @@ class DataProvider(ABC):
         """获取利润表。
 
         Returns:
-            DataFrame columns: end_date, revenue, operating_profit, net_profit, eps
+            DataFrame columns include end_date plus optional ann_date, f_ann_date,
+            report_type, comp_type and update_flag; business fields are revenue,
+            operating_profit, net_profit, optional net_profit_attributable, and eps.
         """
         ...
 
@@ -83,7 +95,9 @@ class DataProvider(ABC):
         """获取资产负债表。
 
         Returns:
-            DataFrame columns: end_date, total_assets, total_liabilities, shareholders_equity
+            DataFrame columns include end_date plus optional ann_date, f_ann_date,
+            report_type, comp_type and update_flag; business fields are total_assets,
+            total_liabilities and shareholders_equity.
         """
         ...
 
@@ -94,7 +108,9 @@ class DataProvider(ABC):
         """获取现金流量表。
 
         Returns:
-            DataFrame columns: end_date, operating_cf, investing_cf, financing_cf
+            DataFrame columns include end_date plus optional ann_date, f_ann_date,
+            report_type, comp_type and update_flag; business fields are operating_cf,
+            investing_cf and financing_cf.
         """
         ...
 
@@ -105,8 +121,9 @@ class DataProvider(ABC):
         """获取财务指标（ROE/ROA/毛利率/净利率/资产负债率/流动比率等）。
 
         Returns:
-            DataFrame columns: end_date, roe, roa, gross_margin, net_margin,
-            debt_to_assets, current_ratio, quick_ratio
+            DataFrame columns include end_date, ann_date and update_flag; business
+            fields are roe, roa, gross_margin, net_margin, debt_to_assets,
+            current_ratio and quick_ratio.
         """
         ...
 

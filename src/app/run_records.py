@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
 from src.analysis.contracts import RunRecord
 from src.config import get_config
+
+# Batch analysis appends records from multiple worker threads to the same
+# JSONL file; the lock keeps lines from interleaving inside one process.
+_WRITE_LOCK = threading.Lock()
 
 
 class RunRecordStore:
@@ -19,8 +24,9 @@ class RunRecordStore:
     def save(self, record: RunRecord) -> None:
         """Append one completed or failed record."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
+        with _WRITE_LOCK:
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
 
     def list(self, limit: int = 20) -> list[dict[str, Any]]:
         """Read recent records, ignoring incomplete lines from an interrupted write."""

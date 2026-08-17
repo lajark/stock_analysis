@@ -9,8 +9,10 @@
     python -m src.app.cli --stats
 """
 
+import json
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import typer
 from loguru import logger
@@ -18,8 +20,17 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from src.app.service import MODES, AnalysisRequest, analyze_stock, validate_ticker
+from src.analysis.backtest import (
+    BacktestSpec,
+    optimize_ma_cross,
+    optimize_ma_cross_multi,
+    optimize_ma_cross_rolling,
+    run_backtest,
+)
+from src.app.backtest_records import persist_backtest_run
+from src.app.service import MODES, AnalysisRequest, analyze_batch, analyze_stock, validate_ticker
 from src.config import get_config
+from src.data.gateway import DataGateway
 from src.runtime_paths import user_data_root
 
 app = typer.Typer(
@@ -101,6 +112,13 @@ def analyze(
     chart: bool = typer.Option(
         False, "--chart", help="生成 K 线技术分析图 (HTML)"
     ),
+    workers: int = typer.Option(
+        None,
+        "--workers",
+        "-w",
+        min=1,
+        help="批量并发数，默认取配置 batch.max_workers（默认 1 = 串行）",
+    ),
     debug: bool = typer.Option(False, "--debug", help="开启 DEBUG 日志"),
 ):
     """分析股票，生成 Markdown 报告。"""
@@ -127,18 +145,52 @@ def analyze(
         date = datetime.now().strftime("%Y-%m-%d")
 
     mode_info = MODES[mode]
+    max_workers = workers or get_config().batch.max_workers
+    worker_note = f" | 并发: {max_workers}" if len(codes) > 1 and max_workers > 1 else ""
     console.print(
         Panel.fit(
             f"[bold cyan]{mode_info['desc']}[/] | {len(codes)} 只股票 | "
-            f"日期: {date} | 模型: {mode_info['model']}",
+            f"日期: {date} | 模型: {mode_info['model']}{worker_note}",
             title="stock_analysis",
         )
     )
 
-    for i, code in enumerate(codes):
-        if len(codes) > 1:
-            console.print(f"\n[bold]--- [{i+1}/{len(codes)}] {code} ---[/]")
-        _analyze_single(code, date, mode, no_llm, chart)
+    if len(codes) == 1:
+        _analyze_single(codes[0], date, mode, no_llm, chart)
+        return
+
+    items = analyze_batch(
+        [
+            AnalysisRequest(
+                ticker=code,
+                date=date,
+                mode=mode,
+                use_llm=not no_llm,
+                chart=chart,
+            )
+            for code in codes
+        ],
+        max_workers=max_workers,
+    )
+    failed = 0
+    for i, item in enumerate(items, start=1):
+        label = f"[{i}/{len(items)}]"
+        if item.error:
+            failed += 1
+            console.print(f"  [red]{label} {item.request.ticker} 失败: {item.error}[/]")
+            continue
+        assert item.result is not None
+        console.print(
+            f"  [green]{label} {item.result.ticker} -> {item.result.output_path}[/]"
+        )
+        if item.result.tokens:
+            console.print(
+                f"      [dim]Token: {item.result.tokens.get('input_tokens', 0)}+"
+                f"{item.result.tokens.get('output_tokens', 0)} | "
+                f"耗时: {item.result.elapsed_seconds:.1f}s[/]"
+            )
+    if failed:
+        console.print(f"[yellow]{failed}/{len(items)} 只股票失败（其余已分别完成）[/]")
 
 
 def _analyze_single(
@@ -270,6 +322,359 @@ def modes():
 
     console.print(table)
     console.print("\n[dim]用法: python -m src.app.cli --ticker 600519.SH --mode <模式>[/]")
+
+
+# ------------------------------------------------------------------
+# 回测与参数优化
+# ------------------------------------------------------------------
+def _parse_int_grid(value: str) -> list[int]:
+    try:
+        values = [int(item.strip()) for item in value.split(",") if item.strip()]
+    except ValueError as error:
+        raise typer.BadParameter("参数必须是逗号分隔的整数") from error
+    if not values:
+        raise typer.BadParameter("参数网格不能为空")
+    return values
+
+
+def _write_json_output(payload: dict, output: Path | None) -> None:
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text + "\n", encoding="utf-8")
+        console.print(f"[green]结果 -> {output}[/]")
+    else:
+        console.print(text)
+
+
+@app.command()
+def backtest(
+    ticker: str = typer.Option(..., "--ticker", "-t", help="股票代码，如 600519.SH"),
+    start_date: str = typer.Option(..., "--start", help="开始日期 YYYY-MM-DD"),
+    end_date: str = typer.Option(..., "--end", help="结束日期 YYYY-MM-DD"),
+    ma_fast: int = typer.Option(20, "--fast", min=1, help="快均线周期"),
+    ma_slow: int = typer.Option(60, "--slow", min=2, help="慢均线周期"),
+    adjustment: str = typer.Option("none", "--adjustment", help="none | qfq | hfq"),
+    initial_cash: float = typer.Option(100_000.0, "--cash", min=1, help="初始资金"),
+    output: Path | None = typer.Option(None, "--output", help="可选 JSON 输出路径"),
+):
+    """运行只做多、T+1 开盘成交的研究回测。"""
+    try:
+        code = _validate_ticker(ticker)
+        data = DataGateway().fetch_market_data(
+            code, start_date, end_date, adjustment=adjustment
+        )
+        result = run_backtest(
+            data.daily,
+            spec=BacktestSpec(
+                ma_fast=ma_fast,
+                ma_slow=ma_slow,
+                initial_cash=initial_cash,
+                adjustment=adjustment,
+            ),
+        )
+    except Exception as error:
+        console.print(f"[red]回测失败: {error}[/]")
+        raise typer.Exit(1) from error
+    run = persist_backtest_run(
+        {
+            "ticker": code,
+            "start_date": start_date,
+            "end_date": end_date,
+            "strategy": "ma_cross",
+            "parameters": result.parameters,
+            "data_hash": result.data_hash,
+            "adjustment": adjustment,
+        },
+        result,
+    )
+    payload = result.to_dict()
+    payload["run_id"] = run.run_id
+    _write_json_output(payload, output)
+
+
+@app.command()
+def optimize(
+    ticker: str = typer.Option(..., "--ticker", "-t", help="股票代码，如 600519.SH"),
+    start_date: str = typer.Option(..., "--start", help="开始日期 YYYY-MM-DD"),
+    end_date: str = typer.Option(..., "--end", help="结束日期 YYYY-MM-DD"),
+    fast_grid: str = typer.Option("5,10,20", "--fast-grid", help="快均线候选值"),
+    slow_grid: str = typer.Option("30,60,120", "--slow-grid", help="慢均线候选值"),
+    objective: str = typer.Option(
+        "sharpe", "--objective", help="sharpe | total_return | calmar | robust"
+    ),
+    train_ratio: float = typer.Option(0.6, "--train-ratio", min=0.1, max=0.89),
+    validation_ratio: float = typer.Option(0.2, "--validation-ratio", min=0.05, max=0.89),
+    adjustment: str = typer.Option("none", "--adjustment", help="none | qfq | hfq"),
+    max_trials: int | None = typer.Option(
+        None, "--max-trials", min=1, help="有效参数组合数上限，防止网格无界膨胀"
+    ),
+    time_budget: float | None = typer.Option(
+        None,
+        "--time-budget",
+        min=1,
+        help="运行时间预算（秒），超限提前终止并保留已有最优",
+    ),
+    memory_budget_mb: int | None = typer.Option(
+        None,
+        "--memory-limit-mb",
+        min=1,
+        help="内存预算（Python 堆 MiB，tracemalloc 近似），超限提前终止",
+    ),
+    output: Path | None = typer.Option(None, "--output", help="可选 JSON 输出路径"),
+):
+    """在训练集选参，并独立报告验证集和测试集结果。"""
+    try:
+        code = _validate_ticker(ticker)
+        data = DataGateway().fetch_market_data(
+            code, start_date, end_date, adjustment=adjustment
+        )
+        result = optimize_ma_cross(
+            data.daily,
+            {"ma_fast": _parse_int_grid(fast_grid), "ma_slow": _parse_int_grid(slow_grid)},
+            objective=objective,
+            train_ratio=train_ratio,
+            validation_ratio=validation_ratio,
+            adjustment=adjustment,
+            max_trials=max_trials,
+            time_budget_s=time_budget,
+            memory_budget_mb=memory_budget_mb,
+        )
+    except Exception as error:
+        console.print(f"[red]参数优化失败: {error}[/]")
+        raise typer.Exit(1) from error
+    run = persist_backtest_run(
+        {
+            "ticker": code,
+            "start_date": start_date,
+            "end_date": end_date,
+            "strategy": "ma_cross",
+            "objective": objective,
+            "adjustment": adjustment,
+            "max_trials": max_trials,
+            "time_budget": time_budget,
+            "memory_budget_mb": memory_budget_mb,
+            "parameter_grid": {
+                "ma_fast": _parse_int_grid(fast_grid),
+                "ma_slow": _parse_int_grid(slow_grid),
+            },
+        },
+        result,
+    )
+    payload = result.to_dict()
+    payload["run_id"] = run.run_id
+    _write_json_output(payload, output)
+
+
+@app.command("optimize-rolling")
+def optimize_rolling(
+    ticker: str = typer.Option(..., "--ticker", "-t", help="股票代码，如 600519.SH"),
+    start_date: str = typer.Option(..., "--start", help="开始日期 YYYY-MM-DD"),
+    end_date: str = typer.Option(..., "--end", help="结束日期 YYYY-MM-DD"),
+    train_size: int = typer.Option(..., "--train-size", min=1, help="每个窗口训练日数"),
+    validation_size: int = typer.Option(
+        ..., "--validation-size", min=1, help="每个窗口验证日数"
+    ),
+    test_size: int = typer.Option(..., "--test-size", min=1, help="每个窗口测试日数"),
+    step_size: int | None = typer.Option(
+        None, "--step-size", min=1, help="窗口滚动步长，默认等于测试日数"
+    ),
+    fast_grid: str = typer.Option("5,10,20", "--fast-grid", help="快均线候选值"),
+    slow_grid: str = typer.Option("30,60,120", "--slow-grid", help="慢均线候选值"),
+    objective: str = typer.Option(
+        "sharpe", "--objective", help="sharpe | total_return | calmar | robust"
+    ),
+    adjustment: str = typer.Option("none", "--adjustment", help="none | qfq | hfq"),
+    min_trades: int = typer.Option(
+        1, "--min-trades", min=0, help="训练集允许选中的最小完成交易次数"
+    ),
+    max_trials: int | None = typer.Option(
+        None, "--max-trials", min=1, help="每个滚动窗口的有效参数组合数上限"
+    ),
+    time_budget: float | None = typer.Option(
+        None,
+        "--time-budget",
+        min=1,
+        help="运行时间预算（秒），超限提前终止并保留已有最优",
+    ),
+    memory_budget_mb: int | None = typer.Option(
+        None,
+        "--memory-limit-mb",
+        min=1,
+        help="内存预算（Python 堆 MiB，tracemalloc 近似），超限提前终止",
+    ),
+    output: Path | None = typer.Option(None, "--output", help="可选 JSON 输出路径"),
+):
+    """滚动训练/验证/测试并报告参数稳定性，不自动改写系统参数。"""
+    fast_values = _parse_int_grid(fast_grid)
+    slow_values = _parse_int_grid(slow_grid)
+    try:
+        code = _validate_ticker(ticker)
+        data = DataGateway().fetch_market_data(
+            code, start_date, end_date, adjustment=adjustment
+        )
+        result = optimize_ma_cross_rolling(
+            data.daily,
+            {"ma_fast": fast_values, "ma_slow": slow_values},
+            train_size=train_size,
+            validation_size=validation_size,
+            test_size=test_size,
+            step_size=step_size,
+            objective=objective,
+            min_trades=min_trades,
+            adjustment=adjustment,
+            max_trials=max_trials,
+            time_budget_s=time_budget,
+            memory_budget_mb=memory_budget_mb,
+        )
+    except Exception as error:
+        console.print(f"[red]滚动参数优化失败: {error}[/]")
+        raise typer.Exit(1) from error
+    run = persist_backtest_run(
+        {
+            "ticker": code,
+            "start_date": start_date,
+            "end_date": end_date,
+            "strategy": "ma_cross",
+            "optimization": "rolling",
+            "objective": objective,
+            "adjustment": adjustment,
+            "train_size": train_size,
+            "validation_size": validation_size,
+            "test_size": test_size,
+            "step_size": step_size,
+            "min_trades": min_trades,
+            "max_trials": max_trials,
+            "time_budget": time_budget,
+            "memory_budget_mb": memory_budget_mb,
+            "parameter_grid": {"ma_fast": fast_values, "ma_slow": slow_values},
+        },
+        result,
+    )
+    payload = result.to_dict()
+    payload["run_id"] = run.run_id
+    _write_json_output(payload, output)
+
+
+@app.command("optimize-multi")
+def optimize_multi(
+    tickers: str = typer.Option(
+        ..., "--tickers", "-t", help="股票代码，逗号分隔，如 600519.SH,000858.SZ"
+    ),
+    start_date: str = typer.Option(..., "--start", help="开始日期 YYYY-MM-DD"),
+    end_date: str = typer.Option(..., "--end", help="结束日期 YYYY-MM-DD"),
+    train_size: int = typer.Option(..., "--train-size", min=1, help="每个窗口训练日数"),
+    validation_size: int = typer.Option(
+        ..., "--validation-size", min=1, help="每个窗口验证日数"
+    ),
+    test_size: int = typer.Option(..., "--test-size", min=1, help="每个窗口测试日数"),
+    step_size: int | None = typer.Option(
+        None, "--step-size", min=1, help="窗口滚动步长，默认等于测试日数"
+    ),
+    fast_grid: str = typer.Option("5,10,20", "--fast-grid", help="快均线候选值"),
+    slow_grid: str = typer.Option("30,60,120", "--slow-grid", help="慢均线候选值"),
+    objective: str = typer.Option(
+        "robust", "--objective", help="sharpe | total_return | calmar | robust"
+    ),
+    adjustment: str = typer.Option("none", "--adjustment", help="none | qfq | hfq"),
+    min_trades: int = typer.Option(
+        1, "--min-trades", min=0, help="训练集允许选中的最小完成交易次数"
+    ),
+    min_successful_symbols: int = typer.Option(
+        2, "--min-successful-symbols", min=1, help="形成稳定聚合结论所需的最少标的数"
+    ),
+    max_trials: int | None = typer.Option(
+        None, "--max-trials", min=1, help="每个标的每个滚动窗口的有效参数组合数上限"
+    ),
+    time_budget: float | None = typer.Option(
+        None,
+        "--time-budget",
+        min=1,
+        help="运行时间预算（秒），超限提前终止并保留已有最优",
+    ),
+    memory_budget_mb: int | None = typer.Option(
+        None,
+        "--memory-limit-mb",
+        min=1,
+        help="内存预算（Python 堆 MiB，tracemalloc 近似），超限提前终止",
+    ),
+    states: str | None = typer.Option(
+        None, "--states", help="可选市场状态，按 tickers 顺序逗号分隔"
+    ),
+    output: Path | None = typer.Option(None, "--output", help="可选 JSON 输出路径"),
+):
+    """跨股票滚动优化，按标的等权汇总参数稳定性。"""
+    codes = [_validate_ticker(item.strip()) for item in tickers.split(",") if item.strip()]
+    if not codes:
+        raise typer.BadParameter("tickers 不能为空")
+    state_values = [item.strip() for item in states.split(",")] if states else []
+    if state_values and len(state_values) != len(codes):
+        raise typer.BadParameter("states 数量必须与 tickers 一致")
+    market_states = dict(zip(codes, state_values)) if state_values else None
+    fast_values = _parse_int_grid(fast_grid)
+    slow_values = _parse_int_grid(slow_grid)
+    daily_by_symbol = {}
+    gateway = DataGateway()
+    fetch_warnings: list[str] = []
+    for code in codes:
+        try:
+            data = gateway.fetch_market_data(
+                code, start_date, end_date, adjustment=adjustment
+            )
+        except Exception as error:
+            fetch_warnings.append(f"{code} 获取失败：{error}")
+            continue
+        daily_by_symbol[code] = data.daily
+        fetch_warnings.extend(f"{code}: {warning}" for warning in data.warnings)
+    if not daily_by_symbol:
+        console.print("[red]没有成功获取任何标的的日线数据[/]")
+        raise typer.Exit(1)
+    try:
+        result = optimize_ma_cross_multi(
+            daily_by_symbol,
+            {"ma_fast": fast_values, "ma_slow": slow_values},
+            train_size=train_size,
+            validation_size=validation_size,
+            test_size=test_size,
+            step_size=step_size,
+            objective=objective,
+            min_trades=min_trades,
+            adjustment=adjustment,
+            market_state_by_symbol=market_states,
+            min_successful_symbols=min_successful_symbols,
+            max_trials=max_trials,
+            time_budget_s=time_budget,
+            memory_budget_mb=memory_budget_mb,
+        )
+    except Exception as error:
+        console.print(f"[red]多标的参数优化失败: {error}[/]")
+        raise typer.Exit(1) from error
+    run = persist_backtest_run(
+        {
+            "tickers": codes,
+            "start_date": start_date,
+            "end_date": end_date,
+            "strategy": "ma_cross",
+            "optimization": "multi_rolling",
+            "objective": objective,
+            "adjustment": adjustment,
+            "train_size": train_size,
+            "validation_size": validation_size,
+            "test_size": test_size,
+            "step_size": step_size,
+            "min_trades": min_trades,
+            "min_successful_symbols": min_successful_symbols,
+            "max_trials": max_trials,
+            "time_budget": time_budget,
+            "memory_budget_mb": memory_budget_mb,
+            "parameter_grid": {"ma_fast": fast_values, "ma_slow": slow_values},
+        },
+        result,
+    )
+    payload = result.to_dict()
+    payload["run_id"] = run.run_id
+    payload["fetch_warnings"] = fetch_warnings
+    _write_json_output(payload, output)
 
 
 # ------------------------------------------------------------------

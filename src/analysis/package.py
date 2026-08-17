@@ -4,7 +4,7 @@
 """
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, cast
 
@@ -17,13 +17,22 @@ from src.analysis.contracts import (
     QualityStatus,
     new_run_id,
 )
+from src.analysis.evidence_decision import (
+    analyze_market_sentiment,
+    build_investment_decision,
+)
 from src.analysis.evidence_diff import compare_evidence_packages
 from src.analysis.fundamentals import analyze_fundamentals
 from src.analysis.indicators import calc_all_indicators, summarize_indicators
+from src.analysis.parameters import AnalysisParameters
 from src.analysis.price_levels import analyze_price_levels
 from src.analysis.risk import analyze_risk
 from src.analysis.scenarios import build_scenarios
 from src.analysis.valuation import analyze_valuation
+from src.config import get_config
+from src.data.adjustments import AdjustmentMode
+from src.data.financials import financial_data_as_of
+from src.data.market_behavior import moneyflow_data_as_of
 
 
 def _dataset_row_count(value: Any) -> int:
@@ -57,6 +66,10 @@ def build_analysis_package(
     fina_indicator: pd.DataFrame,
     analysis_date: str,
     *,
+    moneyflow: pd.DataFrame | None = None,
+    external_sentiment_evidence: Sequence[Mapping[str, Any]] | None = None,
+    official_event_records: Sequence[Mapping[str, Any]] | None = None,
+    adjustment: AdjustmentMode = "none",
     run_id: str | None = None,
     provider_name: str = "tushare",
     dataset_providers: Mapping[str, str] | None = None,
@@ -78,6 +91,9 @@ def build_analysis_package(
         cashflow: 现金流量表
         fina_indicator: 财务指标
         analysis_date: 分析日期
+        moneyflow: 可选历史资金流，用于独立市场行为证据
+        external_sentiment_evidence: 可选的外部结构化情绪证据；仅接受带来源和 as-of 的记录
+        official_event_records: 可选的巨潮资讯/交易所公告事件记录
         dataset_providers: 数据集级来源；缺省时使用 provider_name
         dataset_quality: 数据集级质量状态；用于保留降级或过期标记
         data_warnings: 数据获取阶段产生的安全告警
@@ -88,7 +104,8 @@ def build_analysis_package(
         结构化分析包 JSON，大小通常 < 5KB。
     """
     # 计算技术指标
-    daily_with_indicators = calc_all_indicators(daily)
+    parameters = AnalysisParameters.from_config(get_config().analysis)
+    daily_with_indicators = calc_all_indicators(daily, parameters)
     technical = summarize_indicators(daily_with_indicators)
 
     # 基本面
@@ -99,6 +116,19 @@ def build_analysis_package(
 
     # 风险
     risk = analyze_risk(daily)
+    moneyflow_frame = moneyflow if moneyflow is not None else pd.DataFrame()
+    sentiment = analyze_market_sentiment(
+        daily,
+        moneyflow_frame,
+        external_evidence=external_sentiment_evidence,
+        official_event_records=official_event_records,
+    )
+    decision = build_investment_decision(
+        fundamental,
+        technical,
+        sentiment,
+        as_of=analysis_date,
+    )
 
     # 价格水平（支撑/阻力/目标价/置信度）
     price_levels = analyze_price_levels(daily_with_indicators)
@@ -123,15 +153,22 @@ def build_analysis_package(
         "balance_sheet": balance_sheet,
         "cashflow": cashflow,
         "financial_indicators": fina_indicator,
+        "moneyflow": moneyflow_frame,
     }
     descriptors = {
         name: DatasetDescriptor(
             name=name,
             provider=dataset_providers.get(name, provider_name),
-            as_of=data_date,
+            as_of=(
+                financial_data_as_of(value)
+                if name in {"income", "balance_sheet", "cashflow", "financial_indicators"}
+                else moneyflow_data_as_of(value)
+                if name == "moneyflow"
+                else data_date
+            ),
             row_count=_dataset_row_count(value),
             quality=_dataset_quality(name, value, dataset_quality),
-            adjustment="none" if name == "daily" else None,
+            adjustment=adjustment if name == "daily" else None,
         )
         for name, value in raw_datasets.items()
     }
@@ -173,6 +210,8 @@ def build_analysis_package(
         "fundamental": fundamental,
         "valuation": valuation,
         "risk": risk,
+        "sentiment": sentiment,
+        "decision": decision,
         "price_levels": price_levels,
         "scenarios": scenario_result["scenarios"],
         "scenario_method_version": scenario_result["method_version"],

@@ -27,10 +27,24 @@ class AkShareConfig(BaseSettings):
     retry_count: int = 3
 
 
+class CninfoConfig(BaseSettings):
+    """巨潮资讯公告情绪来源配置。"""
+
+    enabled: bool = True
+    base_url: str = "https://www.cninfo.com.cn"
+    static_base_url: str = "https://static.cninfo.com.cn"
+    timeout: int = 30
+    page_size: int = 30
+    max_pages: int = 20
+    lookback_days: int = 365
+    include_hk: bool = False
+
+
 class CacheConfig(BaseSettings):
     """缓存配置。"""
     enabled: bool = True
     ttl_daily: int = 86400       # 日线缓存 TTL（秒）
+    ttl_adjustment_factors: int = 86400  # 复权因子缓存 TTL（秒）
     ttl_financials: int = 604800 # 财务数据缓存 TTL（秒）
 
 
@@ -51,6 +65,13 @@ class AnalysisConfig(BaseSettings):
 class ValuationConfig(BaseSettings):
     """估值分析配置。"""
     percentile_windows: list[int] = [1, 3, 5]
+
+
+class BatchConfig(BaseSettings):
+    """批量分析并发与限频配置。"""
+    max_workers: int = 1              # 数据/分析并发；默认 1 保持串行
+    request_min_interval_s: float = 0.05  # 供应商请求最小间隔（~20 req/s 保守）
+    llm_max_concurrent: int = 1       # LLM 调用并发上限（成本控制，默认串行）
 
 
 class LLMConfig(BaseSettings):
@@ -74,6 +95,7 @@ class AppConfig(BaseSettings):
     data_provider: str = "tushare"
     tushare: TushareConfig = Field(default_factory=TushareConfig)
     akshare: AkShareConfig = Field(default_factory=AkShareConfig)
+    cninfo: CninfoConfig = Field(default_factory=CninfoConfig)
 
     # 缓存
     cache: CacheConfig = Field(default_factory=CacheConfig)
@@ -87,6 +109,9 @@ class AppConfig(BaseSettings):
 
     # 报告
     report: ReportConfig = Field(default_factory=ReportConfig)
+
+    # 批量并发
+    batch: BatchConfig = Field(default_factory=BatchConfig)
 
     # 环境变量（直接从 .env 读取）
     tushare_token: str = Field(default="", alias="TUSHARE_TOKEN")

@@ -1,11 +1,14 @@
 """分析历史记录 — 管理历次分析记录和报告索引。"""
 
 import json
+import threading
 from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
 from src.config import get_config
+
+# add() reloads and rewrites the whole file; the lock serializes concurrent
+# writers so a stale in-memory snapshot cannot clobber a newer record.
+_HISTORY_LOCK = threading.Lock()
 
 
 class AnalysisHistory:
@@ -30,10 +33,12 @@ class AnalysisHistory:
 
     def _save(self) -> None:
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
-        self._history_path.write_text(
+        tmp = self._history_path.with_suffix(".json.tmp")
+        tmp.write_text(
             json.dumps(self._records, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        tmp.replace(self._history_path)
 
     def add(
         self,
@@ -46,25 +51,30 @@ class AnalysisHistory:
         date: str,
     ) -> None:
         """添加一条分析记录。"""
-        self._records.append({
-            "id": len(self._records) + 1,
-            "ticker": ticker,
-            "name": name,
-            "mode": mode,
-            "date": date,
-            "analyzed_at": datetime.now().isoformat(),
-            "report_path": report_path,
-            "tokens": tokens,
-            "cost": cost,
-        })
-        # 只保留最近 200 条
-        if len(self._records) > 200:
-            self._records = self._records[-200:]
-        self._save()
+        with _HISTORY_LOCK:
+            # Re-read the latest snapshot before mutating so concurrent adds
+            # do not overwrite each other's records.
+            self._records = self._load()
+            next_id = max((r.get("id", 0) for r in self._records), default=0) + 1
+            self._records.append({
+                "id": next_id,
+                "ticker": ticker,
+                "name": name,
+                "mode": mode,
+                "date": date,
+                "analyzed_at": datetime.now().isoformat(),
+                "report_path": report_path,
+                "tokens": tokens,
+                "cost": cost,
+            })
+            # 只保留最近 200 条
+            if len(self._records) > 200:
+                self._records = self._records[-200:]
+            self._save()
 
     def list(
         self,
-        ticker: Optional[str] = None,
+        ticker: str | None = None,
         limit: int = 20,
     ) -> list[dict]:
         """列出分析记录，按时间倒序。"""

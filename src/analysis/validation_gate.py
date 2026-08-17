@@ -214,6 +214,30 @@ def validate_analysis_inputs(
                 f"{dataset} 报告期晚于请求日期，疑似混入未来数据",
                 (dataset, "financial_period"),
             )
+        if report_dates.duplicated().any():
+            add_check(
+                f"financial.{dataset}.revision",
+                "warn",
+                f"{dataset} 同一报告期存在多个版本，需确认修订选择策略",
+                (dataset, "financial_revision"),
+            )
+        announcement_columns = [
+            column for column in ("f_ann_date", "ann_date") if column in frame.columns
+        ]
+        if announcement_columns:
+            announcement_dates = pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns]")
+            for column in announcement_columns:
+                announcement_dates = announcement_dates.fillna(
+                    pd.to_datetime(frame[column], errors="coerce")
+                )
+            future_announcements = announcement_dates > requested
+            if future_announcements.any():
+                add_check(
+                    f"financial.{dataset}.announcement",
+                    "fail",
+                    f"{dataset} 含请求日期之后才公告的记录，疑似未来信息泄漏",
+                    (dataset, "financial_announcement"),
+                )
 
     if blocking_reasons:
         gate_status: Literal["pass", "degraded", "block"] = "block"

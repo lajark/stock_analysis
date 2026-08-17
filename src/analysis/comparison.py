@@ -5,7 +5,9 @@ from typing import Any
 import pandas as pd
 
 from src.analysis.indicators import calc_all_indicators, summarize_indicators
+from src.analysis.parameters import AnalysisParameters
 from src.analysis.price_levels import analyze_price_levels
+from src.config import get_config
 
 
 def compare_stocks(
@@ -23,6 +25,7 @@ def compare_stocks(
         "stocks": [],
         "ranking": {},
     }
+    parameters = AnalysisParameters.from_config(get_config().analysis)
 
     metrics = {
         "pe_ttm": [],
@@ -38,7 +41,7 @@ def compare_stocks(
         if daily.empty:
             continue
 
-        df_with_ind = calc_all_indicators(daily)
+        df_with_ind = calc_all_indicators(daily, parameters)
         tech = summarize_indicators(df_with_ind)
         price_levels = analyze_price_levels(df_with_ind)
         daily_basic = data.get("daily_basic", {})
@@ -77,6 +80,8 @@ def compare_stocks(
     if metrics["pe_ttm"]:
         comparison["ranking"]["pe_lowest"] = sorted(metrics["pe_ttm"], key=lambda x: x[1])[:3]
     comparison["ranking"]["rsi_strongest"] = sorted(metrics["rsi"], key=lambda x: -x[1])[:3]
-    comparison["ranking"]["buy_confidence_highest"] = sorted(metrics["buy_confidence"], key=lambda x: -x[1])[:3]
+    comparison["ranking"]["buy_confidence_highest"] = sorted(
+        metrics["buy_confidence"], key=lambda x: -x[1]
+    )[:3]
 
     return comparison

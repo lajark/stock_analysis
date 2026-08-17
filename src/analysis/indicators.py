@@ -7,6 +7,8 @@
 import numpy as np
 import pandas as pd
 
+from src.analysis.parameters import AnalysisParameters
+
 
 # ------------------------------------------------------------------
 # 移动平均线
@@ -155,18 +157,31 @@ def calc_volume_ratio(df: pd.DataFrame, period: int = 20) -> pd.DataFrame:
 # ------------------------------------------------------------------
 # 批量计算全部指标
 # ------------------------------------------------------------------
-def calc_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """计算全部技术指标，合并到一张 DataFrame。"""
-    df = calc_ma(df)
-    df = calc_ema(df)
-    df = calc_bollinger(df)
-    df = calc_rsi(df)
-    df = calc_macd(df)
-    df = calc_kdj(df)
-    df = calc_cci(df)
-    df = calc_williams_r(df)
+def calc_all_indicators(
+    df: pd.DataFrame,
+    parameters: AnalysisParameters | None = None,
+) -> pd.DataFrame:
+    """计算全部技术指标，合并到一张 DataFrame。
+
+    ``parameters`` 显式传入时不会读取或修改全局配置，便于回测和参数
+    优化复现；缺省值保持与历史调用兼容。
+    """
+    parameters = parameters or AnalysisParameters()
+    df = calc_ma(df, list(parameters.ma_periods))
+    df = calc_ema(df, [parameters.macd_fast, parameters.macd_slow])
+    df = calc_bollinger(df, parameters.bollinger_period, parameters.bollinger_std)
+    df = calc_rsi(df, parameters.rsi_period)
+    df = calc_macd(
+        df,
+        parameters.macd_fast,
+        parameters.macd_slow,
+        parameters.macd_signal,
+    )
+    df = calc_kdj(df, parameters.kdj_n, parameters.kdj_m1, parameters.kdj_m2)
+    df = calc_cci(df, parameters.bollinger_period)
+    df = calc_williams_r(df, parameters.rsi_period)
     df = calc_obv(df)
-    df = calc_volume_ratio(df)
+    df = calc_volume_ratio(df, parameters.bollinger_period)
     return df
 
 

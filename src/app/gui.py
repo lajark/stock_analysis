@@ -2,16 +2,75 @@
 
 import os
 import queue
+import re
 import threading
 import tkinter as tk
+from collections.abc import Sequence
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 from loguru import logger
 
-from src.app.service import MODES, AnalysisRequest, AnalysisResult, analyze_stock
+from src.app.service import (
+    MODES,
+    STAGES,
+    AnalysisCancelledError,
+    AnalysisRequest,
+    AnalysisResult,
+    BatchItem,
+    analyze_batch,
+    analyze_stock,
+)
 from src.config import get_config, get_user_settings, save_user_settings
 from src.runtime_paths import user_data_root
+
+# Short Chinese labels keyed by the canonical service stage names.
+STAGE_LABELS = {
+    "validate_request": "校验输入",
+    "acquire_data": "获取数据",
+    "validate_evidence": "数据质量校验",
+    "build_evidence": "本地指标计算",
+    "generate_report": "生成分析报告",
+    "render_chart": "生成 K 线图",
+    "finish": "收尾",
+}
+
+
+def _split_tickers(text: str) -> list[str]:
+    """Split a GUI ticker input into individual codes.
+
+    Accepts commas, semicolons, whitespace or newlines as separators; at least
+    one code triggers the batch path in the UI (single code keeps the legacy
+    single-stock behavior).
+    """
+    return [part for part in re.split(r"[,;\s]+", text.strip()) if part]
+
+
+def _format_batch_summary(items: Sequence[BatchItem], *, cancelled: bool) -> str:
+    """Plain-text per-item summary shown in the result preview after a batch.
+
+    Successful items list outcome + report path; cancelled items (cancelled
+    mode only) are marked with ``○``; everything else carries the isolated
+    error message. Never persisted anywhere (same constraint as streaming
+    preview).
+    """
+    lines = ["批量分析结果"]
+    for index, item in enumerate(items, start=1):
+        tag = f"[{index}/{len(items)}]"
+        if item.result is not None:
+            result = item.result
+            lines.append(
+                f"✓ {tag} {result.ticker} {result.stock_name} — "
+                f"{result.elapsed_seconds:.1f}s"
+            )
+            lines.append(f"    {result.output_path}")
+        elif cancelled and item.error is not None and "取消" in item.error:
+            lines.append(f"○ {tag} {item.request.ticker} — 已取消")
+        elif item.error is not None:
+            lines.append(f"✗ {tag} {item.request.ticker} — {item.error}")
+        else:
+            lines.append(f"✗ {tag} {item.request.ticker} — 未知错误")
+    return "\n".join(lines)
 
 
 class StockAnalysisApp:
@@ -23,7 +82,9 @@ class StockAnalysisApp:
         self.root.geometry("820x680")
         self.root.minsize(720, 580)
         self.current_result: AnalysisResult | None = None
+        self.cancel_event: threading.Event | None = None
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self._token_preview_active = False
 
         self.notebook = ttk.Notebook(root)
         self.analysis_page = ttk.Frame(self.notebook, padding=18)
@@ -44,9 +105,11 @@ class StockAnalysisApp:
     def _build_analysis_page(self) -> None:
         page = self.analysis_page
         page.columnconfigure(1, weight=1)
-        page.rowconfigure(7, weight=1)
+        page.rowconfigure(8, weight=1)
 
-        ttk.Label(page, text="股票代码").grid(row=0, column=0, sticky=tk.W, pady=(0, 12))
+        ttk.Label(page, text="股票代码（可多只，逗号/空格分隔）").grid(
+            row=0, column=0, sticky=tk.W, pady=(0, 12)
+        )
         self.ticker_var = tk.StringVar()
         ticker_entry = ttk.Entry(page, textvariable=self.ticker_var, width=26)
         ticker_entry.grid(row=0, column=1, sticky=tk.EW, pady=(0, 12))
@@ -81,6 +144,13 @@ class StockAnalysisApp:
         actions.grid(row=4, column=0, columnspan=2, sticky=tk.EW)
         self.analyze_button = ttk.Button(actions, text="开始分析", command=self._start_analysis)
         self.analyze_button.pack(side=tk.LEFT)
+        self.cancel_button = ttk.Button(
+            actions,
+            text="取消分析",
+            command=self._cancel_analysis,
+            state=tk.DISABLED,
+        )
+        self.cancel_button.pack(side=tk.LEFT, padx=(10, 0))
         self.open_button = ttk.Button(
             actions,
             text="打开结果文件",
@@ -94,13 +164,17 @@ class StockAnalysisApp:
 
         self.progress = ttk.Progressbar(page, mode="indeterminate")
         self.progress.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(16, 6))
+        self.stage_var = tk.StringVar(value="")
+        ttk.Label(page, textvariable=self.stage_var).grid(
+            row=6, column=0, columnspan=2, sticky=tk.W, pady=(0, 4)
+        )
         self.status_var = tk.StringVar(value="准备就绪")
         ttk.Label(page, textvariable=self.status_var).grid(
-            row=6, column=0, columnspan=2, sticky=tk.W, pady=(0, 10)
+            row=7, column=0, columnspan=2, sticky=tk.W, pady=(0, 10)
         )
 
         preview_frame = ttk.LabelFrame(page, text="结果预览", padding=8)
-        preview_frame.grid(row=7, column=0, columnspan=2, sticky=tk.NSEW)
+        preview_frame.grid(row=8, column=0, columnspan=2, sticky=tk.NSEW)
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
         self.preview = tk.Text(preview_frame, wrap=tk.WORD, state=tk.DISABLED)
@@ -204,30 +278,98 @@ class StockAnalysisApp:
         messagebox.showinfo("保存成功", "API 设置已保存，仅对当前 Windows 用户生效。")
 
     def _start_analysis(self) -> None:
+        mode = self.mode_labels[self.mode_var.get()]
+        codes = _split_tickers(self.ticker_var.get())
+
+        self.analyze_button.configure(state=tk.DISABLED)
+        self.open_button.configure(state=tk.DISABLED)
+        self.cancel_button.configure(state=tk.NORMAL)
+        self.cancel_event = threading.Event()
+        self.current_result = None
+        self._token_preview_active = False
+        self.stage_var.set("")
+        self.progress.start(12)
+        self._set_preview("")
+
+        if len(codes) > 1:
+            requests = [
+                AnalysisRequest(
+                    ticker=code,
+                    mode=mode,
+                    use_llm=self.use_llm_var.get(),
+                    chart=self.chart_var.get(),
+                )
+                for code in codes
+            ]
+            self.status_var.set(f"正在准备批量分析…（共 {len(codes)} 只）")
+            threading.Thread(
+                target=self._batch_worker, args=(requests,), daemon=True
+            ).start()
+            return
+
         request = AnalysisRequest(
-            ticker=self.ticker_var.get(),
-            mode=self.mode_labels[self.mode_var.get()],
+            ticker=codes[0] if codes else self.ticker_var.get(),
+            mode=mode,
             use_llm=self.use_llm_var.get(),
             chart=self.chart_var.get(),
         )
-        self.analyze_button.configure(state=tk.DISABLED)
-        self.open_button.configure(state=tk.DISABLED)
-        self.current_result = None
-        self.progress.start(12)
         self.status_var.set("正在准备分析…")
-        self._set_preview("")
-        threading.Thread(target=self._analysis_worker, args=(request,), daemon=True).start()
+        threading.Thread(
+            target=self._analysis_worker, args=(request,), daemon=True
+        ).start()
+
+    def _cancel_analysis(self) -> None:
+        """Request cancellation; the worker honours it at the next checkpoint."""
+        if self.cancel_event is not None:
+            self.cancel_event.set()
+            self.cancel_button.configure(state=tk.DISABLED)
+            self.status_var.set("正在取消…（将在安全检查点生效）")
 
     def _analysis_worker(self, request: AnalysisRequest) -> None:
         try:
             result = analyze_stock(
                 request,
                 progress=lambda message: self.events.put(("progress", message)),
+                cancel_event=self.cancel_event,
+                stage_progress=lambda stage, status, message: self.events.put(
+                    ("stage", (stage, status, message))
+                ),
+                token_callback=lambda text: self.events.put(("token", text)),
             )
+        except AnalysisCancelledError:
+            self.events.put(("cancelled", None))
+            return
         except Exception as exc:
             self.events.put(("failed", str(exc)))
             return
         self.events.put(("finished", result))
+
+    def _batch_worker(self, requests: list[AnalysisRequest]) -> None:
+        """Batch analysis worker: failure-isolated items, one shared cancel event.
+
+        Batch mode deliberately disables the LLM streaming preview (scope
+        decision): each item uses the non-streaming report path, and per-item
+        stage events carry a ``[k/N]`` prefix via ``item_prefix``.
+        """
+        total = len(requests)
+        self.events.put(("batch_started", total))
+        try:
+            items = analyze_batch(
+                requests,
+                max_workers=get_config().batch.max_workers,
+                cancel_event=self.cancel_event,
+                stage_progress=lambda stage, status, message: self.events.put(
+                    ("stage", (stage, status, message))
+                ),
+                item_prefix=lambda index, count: f"[{index + 1}/{count}]",
+            )
+        except Exception as exc:
+            self.events.put(("failed", str(exc)))
+            return
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            self.events.put(("batch_cancelled", items))
+        else:
+            self.events.put(("batch_done", items))
 
     def _process_events(self) -> None:
         try:
@@ -235,18 +377,40 @@ class StockAnalysisApp:
                 event, payload = self.events.get_nowait()
                 if event == "progress":
                     self.status_var.set(str(payload))
+                elif event == "stage" and isinstance(payload, tuple) and len(payload) == 3:
+                    self._update_stage(str(payload[0]), str(payload[1]), str(payload[2]))
+                elif event == "token":
+                    self._append_token_preview(str(payload))
+                elif event == "batch_started":
+                    self.status_var.set(f"批量任务已提交，共 {payload} 只")
+                elif event == "batch_done" and isinstance(payload, list):
+                    self._batch_finished(payload)
+                elif event == "batch_cancelled" and isinstance(payload, list):
+                    self._batch_cancelled(payload)
                 elif event == "failed":
                     self._analysis_failed(str(payload))
+                elif event == "cancelled":
+                    self._analysis_cancelled()
                 elif event == "finished" and isinstance(payload, AnalysisResult):
                     self._analysis_finished(payload)
         except queue.Empty:
             pass
         self.root.after(100, self._process_events)
 
+    def _update_stage(self, stage: str, status: str, message: str) -> None:
+        """Deterministic stage progress line: '阶段 k/N：<名称>（进行中）'."""
+        position = STAGES.index(stage) + 1 if stage in STAGES else len(STAGES)
+        label = STAGE_LABELS.get(stage, stage)
+        arrow = "✓" if status == "done" else "○"
+        self.stage_var.set(f"{arrow} 阶段 {position}/{len(STAGES)}：{label}")
+        self.status_var.set(str(message))
+
     def _analysis_finished(self, result: AnalysisResult) -> None:
         self.progress.stop()
         self.analyze_button.configure(state=tk.NORMAL)
         self.open_button.configure(state=tk.NORMAL)
+        self.cancel_button.configure(state=tk.DISABLED)
+        self.stage_var.set("")
         self.current_result = result
         self.status_var.set(
             f"完成：{result.stock_name} ({result.ticker})，耗时 {result.elapsed_seconds:.1f} 秒"
@@ -257,9 +421,41 @@ class StockAnalysisApp:
             content = f"结果已保存至：\n{result.output_path}"
         self._set_preview(content)
 
+    def _analysis_cancelled(self) -> None:
+        """A cancelled run leaves no partial report behind (see service checkpoints)."""
+        self.progress.stop()
+        self.analyze_button.configure(state=tk.NORMAL)
+        self.open_button.configure(state=tk.NORMAL)
+        self.cancel_button.configure(state=tk.DISABLED)
+        self.stage_var.set("")
+        self.status_var.set("分析已取消：未生成报告")
+
+    def _batch_finished(self, items: list[BatchItem]) -> None:
+        """Batch completed normally: per-item summary in preview."""
+        self.progress.stop()
+        self.analyze_button.configure(state=tk.NORMAL)
+        self.cancel_button.configure(state=tk.DISABLED)
+        self.open_button.configure(state=tk.DISABLED)  # Batch has no single result file.
+        self.stage_var.set("")
+        self._set_preview(_format_batch_summary(items, cancelled=False))
+        ok = sum(1 for item in items if item.result is not None)
+        self.status_var.set(f"批量完成：{ok}/{len(items)} 只成功")
+
+    def _batch_cancelled(self, items: list[BatchItem]) -> None:
+        """Batch cancelled mid-run: completed items stay listed, rest marked."""
+        self.progress.stop()
+        self.analyze_button.configure(state=tk.NORMAL)
+        self.cancel_button.configure(state=tk.DISABLED)
+        self.open_button.configure(state=tk.DISABLED)
+        self.stage_var.set("")
+        self._set_preview(_format_batch_summary(items, cancelled=True))
+        done = sum(1 for item in items if item.result is not None)
+        self.status_var.set(f"批量已取消：已分析 {done}/{len(items)} 只")
+
     def _analysis_failed(self, message: str) -> None:
         self.progress.stop()
         self.analyze_button.configure(state=tk.NORMAL)
+        self.cancel_button.configure(state=tk.DISABLED)
         self.status_var.set("分析未完成")
         if "API 设置" in message or "Token" in message or "API Key" in message:
             self.notebook.select(self.settings_page)
@@ -269,6 +465,18 @@ class StockAnalysisApp:
         self.preview.configure(state=tk.NORMAL)
         self.preview.delete("1.0", tk.END)
         self.preview.insert("1.0", content)
+        self.preview.configure(state=tk.DISABLED)
+
+    def _append_token_preview(self, text: str) -> None:
+        """Append one LLM stream delta to the in-memory preview (never persisted)."""
+        if not self._token_preview_active:
+            self._token_preview_active = True
+            position = STAGES.index("generate_report") + 1
+            label = STAGE_LABELS["generate_report"]
+            self.stage_var.set(f"○ 阶段 {position}/{len(STAGES)}：{label}（流式输出中）…")
+        self.preview.configure(state=tk.NORMAL)
+        self.preview.insert(tk.END, text)
+        self.preview.see(tk.END)
         self.preview.configure(state=tk.DISABLED)
 
     def _open_result(self) -> None:

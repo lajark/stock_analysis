@@ -85,7 +85,11 @@ REPORT_TEMPLATE = """# {{ stock_name }} ({{ stock_code }}) 股票分析报告
 | 数据日期 | {{ meta.data_date }} |
 | 数据源 | {{ meta.data_provider }} |
 | 模型 | {{ llm_model }} |
+{% if tokens.input_tokens is not none and tokens.output_tokens is not none %}
 | Token 消耗 | input={{ tokens.input_tokens }}, output={{ tokens.output_tokens }} |
+{% else %}
+| Token 消耗 | 统计不可用（供应商流式未返回 usage） |
+{% endif %}
 
 ---
 
@@ -99,6 +103,7 @@ def render_report(
     llm_model: str,
     tokens: dict[str, int],
     output_path: str | None = None,
+    run_id: str | None = None,
 ) -> str:
     """渲染完整 Markdown 报告。
 
@@ -108,6 +113,7 @@ def render_report(
         llm_model: 使用的模型名称
         tokens: Token 用量
         output_path: 输出文件路径，为 None 则自动生成
+        run_id: 分析 run_id；自动生成文件名时作为唯一后缀，避免并发碰撞
 
     Returns:
         报告文件路径。
@@ -138,9 +144,18 @@ def render_report(
     if output_path is None:
         config = get_config()
         config.reports_dir.mkdir(parents=True, exist_ok=True)
+        # run_id suffix guarantees uniqueness even when two batch workers
+        # render the same code in the same clock tick (datetime resolution on
+        # Windows is far coarser than the old second-level timestamp).
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = str(config.reports_dir / f"{stock['code']}_{ts}.md")
+        code = stock["code"]
+        unique = f"_{run_id[:8]}" if run_id else ""
+        output_path = str(config.reports_dir / f"{code}_{ts}{unique}.md")
 
-    Path(output_path).write_text(report, encoding="utf-8")
+    # Atomic write: readers/other workers never see a truncated report.
+    path = Path(output_path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(report, encoding="utf-8")
+    tmp.replace(path)
 
     return output_path

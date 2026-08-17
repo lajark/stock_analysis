@@ -2,10 +2,12 @@
 
 import json
 import re
+import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -19,6 +21,24 @@ from src.errors import ConfigError, DataValidationError, StockAnalysisError
 from src.runtime_paths import resource_root
 
 ProgressCallback = Callable[[str], None]
+# stage, status ("running"|"done"), message — the machine-readable progress feed.
+StageProgressCallback = Callable[[str, str, str], None]
+# Canonical pipeline stages in execution order (used by the GUI for a
+# deterministic stage list; also the names used for RunRecord.complete_stage).
+STAGES = (
+    "validate_request",
+    "acquire_data",
+    "validate_evidence",
+    "build_evidence",
+    "generate_report",
+    "render_chart",
+    "finish",
+)
+
+
+class AnalysisCancelledError(StockAnalysisError):
+    """Raised at a safe checkpoint when the user cancels; no partial artifacts emitted."""
+
 
 class ModeInfo(TypedDict):
     """Display and LLM behavior for an existing analysis mode."""
@@ -61,6 +81,15 @@ class AnalysisResult:
     tokens: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class BatchItem:
+    """Outcome of one request in a batch run (failure-isolated)."""
+
+    request: AnalysisRequest
+    result: AnalysisResult | None = None
+    error: str | None = None
+
+
 def validate_ticker(ticker: str) -> str:
     """Validate and normalize a mainland stock code."""
     code = ticker.strip().upper()
@@ -101,11 +130,65 @@ def validate_request(request: AnalysisRequest) -> AnalysisRequest:
     )
 
 
+def _fetch_cninfo_events(
+    ticker: str,
+    analysis_date: str,
+    config: Any,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch official disclosure events without making them a hard dependency.
+
+    The primary financial data path remains Tushare. CNINFO failures only add a
+    quality warning because the evidence layer explicitly supports an
+    ``insufficient`` official-event dimension.
+    """
+    cninfo_config = getattr(config, "cninfo", None)
+    if cninfo_config is None or not bool(getattr(cninfo_config, "enabled", False)):
+        return [], None
+    try:
+        from src.data.cninfo import CninfoAnnouncementClient
+
+        end = datetime.strptime(analysis_date, "%Y-%m-%d")
+        lookback_days = max(1, int(getattr(cninfo_config, "lookback_days", 365)))
+        start = end - timedelta(days=lookback_days)
+        client = CninfoAnnouncementClient(
+            base_url=str(
+                getattr(cninfo_config, "base_url", "https://www.cninfo.com.cn")
+                or "https://www.cninfo.com.cn"
+            ),
+            static_base_url=str(
+                getattr(cninfo_config, "static_base_url", "https://static.cninfo.com.cn")
+            ),
+            timeout=int(getattr(cninfo_config, "timeout", 30)),
+            page_size=int(getattr(cninfo_config, "page_size", 30)),
+            max_pages=int(getattr(cninfo_config, "max_pages", 20)),
+            include_hk=bool(getattr(cninfo_config, "include_hk", False)),
+        )
+        records = client.fetch_event_records(ticker, start, end)
+        logger.info("CNINFO 公告事件获取完成：{}，{} 条", ticker, len(records))
+        return records, None
+    except Exception as error:
+        warning = f"official events: CNINFO 获取失败，已保留其他证据（{error}）"
+        logger.warning(warning)
+        return [], warning
+
+
 def analyze_stock(
     request: AnalysisRequest,
     progress: ProgressCallback | None = None,
+    *,
+    cancel_event: threading.Event | None = None,
+    stage_progress: StageProgressCallback | None = None,
+    token_callback: ProgressCallback | None = None,
+    gateway: Any | None = None,
+    llm_factory: Callable[[], Any] | None = None,
 ) -> AnalysisResult:
-    """Run the existing analysis pipeline and return its generated files."""
+    """Run the existing analysis pipeline and return its generated files.
+
+    ``token_callback`` is optional GUI-streaming wiring: when provided, the LLM
+    report is generated through the streaming path and each text delta is
+    forwarded before the full report is rendered to disk. When omitted (CLI,
+    batch), behavior is byte-for-byte identical to the non-streaming path.
+    """
     run = RunRecord.start(
         {
             "ticker": request.ticker,
@@ -120,6 +203,7 @@ def analyze_stock(
 
     try:
         stage_started = time.monotonic()
+        _report_stage(stage_progress, "validate_request", "running", "正在校验输入…")
         validated = validate_request(request)
         run.complete_stage(
             "validate_request",
@@ -130,21 +214,36 @@ def analyze_stock(
                 "use_llm": validated.use_llm,
             },
         )
+        _report_stage(stage_progress, "validate_request", "done", "输入校验完成")
         config = get_config()
 
         _notify(progress, "正在获取股票与行情数据…")
+        _report_stage(stage_progress, "acquire_data", "running", "正在获取股票与行情数据…")
         stage_started = time.monotonic()
-        from src.data.gateway import DataGateway
+        if gateway is None:
+            from src.data.gateway import DataGateway
 
-        data = DataGateway().fetch(
+            gateway = DataGateway()
+
+        data = gateway.fetch(
             validated.ticker,
             "20240101",
             validated.date or "",
             financial_start_date="20220101",
         )
+        official_event_records, official_event_warning = _fetch_cninfo_events(
+            validated.ticker,
+            validated.date or "",
+            config,
+        )
+        data_warnings = list(data.warnings)
+        if official_event_warning:
+            data_warnings.append(official_event_warning)
         if data.warnings:
             for warning in data.warnings:
                 logger.warning(warning)
+        if official_event_warning:
+            logger.warning(official_event_warning)
         run.complete_stage(
             "acquire_data",
             elapsed_ms=_elapsed_ms(stage_started),
@@ -154,9 +253,12 @@ def analyze_stock(
                 "cache_datasets": [
                     name for name, provider in data.providers.items() if provider == "cache"
                 ],
-                "warning_count": len(data.warnings),
+                "warning_count": len(data_warnings),
+                "official_event_count": len(official_event_records),
             },
         )
+        _report_stage(stage_progress, "acquire_data", "done", "数据获取完成")
+        _check_cancel(cancel_event)
         stock_info = data.stock_info
         daily = data.daily
         daily_basic = data.daily_basic
@@ -164,8 +266,10 @@ def analyze_stock(
         balance_sheet = data.balance_sheet
         cashflow = data.cashflow
         fina_indicator = data.fina_indicator
+        moneyflow = data.moneyflow
 
         stage_started = time.monotonic()
+        _report_stage(stage_progress, "validate_evidence", "running", "正在校验数据质量…")
         validation = validate_analysis_inputs(
             run_id=run.run_id,
             ticker=validated.ticker,
@@ -177,9 +281,11 @@ def analyze_stock(
                 "balance_sheet": balance_sheet,
                 "cashflow": cashflow,
                 "fina_indicator": fina_indicator,
+                "moneyflow": moneyflow,
             },
             data_quality=data.quality,
             data_gaps=data.data_gaps,
+            adjustment=data.adjustment,
         )
         run.complete_stage(
             "validate_evidence",
@@ -191,6 +297,7 @@ def analyze_stock(
                 "blocking_reasons": validation.blocking_reasons,
             },
         )
+        _report_stage(stage_progress, "validate_evidence", "done", "数据质量校验完成")
         if not validation.allow_llm:
             reason = "；".join(validation.blocking_reasons) or "关键数据未通过校验"
             raise DataValidationError(
@@ -199,6 +306,7 @@ def analyze_stock(
             )
 
         _notify(progress, "正在计算本地分析指标…")
+        _report_stage(stage_progress, "build_evidence", "running", "正在计算本地分析指标…")
         from src.analysis.package import build_analysis_package, package_to_json
 
         stage_started = time.monotonic()
@@ -212,11 +320,14 @@ def analyze_stock(
             cashflow=cashflow,
             fina_indicator=fina_indicator,
             analysis_date=validated.date or "",
+            moneyflow=moneyflow,
+            official_event_records=official_event_records,
+            adjustment=data.adjustment,
             run_id=run.run_id,
             provider_name=data.provider_label,
             dataset_providers=data.providers,
             dataset_quality=data.quality,
-            data_warnings=data.warnings,
+            data_warnings=data_warnings,
             validation=validation.to_dict(),
             previous_package=previous_package,
         )
@@ -229,10 +340,13 @@ def analyze_stock(
                 "data_gaps": package.get("data_gaps", []),
             },
         )
+        _report_stage(stage_progress, "build_evidence", "done", "分析指标计算完成")
 
         tokens: dict[str, Any] = {}
         evidence_path: Path | None = None
         stage_started = time.monotonic()
+        _check_cancel(cancel_event)
+        _report_stage(stage_progress, "generate_report", "running", "正在生成分析报告…")
         if validated.use_llm:
             _notify(progress, "正在生成 AI 分析报告…")
             context = _route_context(validated.mode, package)
@@ -240,6 +354,10 @@ def analyze_stock(
                 package,
                 validated.mode,
                 context=context,
+                run_id=run.run_id,
+                token_callback=token_callback,
+                cancel_event=cancel_event,
+                llm_factory=llm_factory,
             )
             output_kind = "report"
             from src.app.history import AnalysisHistory
@@ -271,6 +389,7 @@ def analyze_stock(
                     "context_chars": context["char_count"],
                 },
             )
+            _report_stage(stage_progress, "generate_report", "done", "分析报告生成完成")
             evidence_path = _save_evidence_package(
                 config.json_dir,
                 validated.ticker,
@@ -281,9 +400,15 @@ def analyze_stock(
             _notify(progress, "正在保存本地分析结果…")
             config.json_dir.mkdir(parents=True, exist_ok=True)
             output_path = config.json_dir / (
-                f"{validated.ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                f"{validated.ticker}_"
+                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{run.run_id[:8]}.json"
             )
-            output_path.write_text(package_to_json(package), encoding="utf-8")
+            # run_id suffix guarantees uniqueness between concurrent batch
+            # workers on one ticker; atomic tmp+replace prevents a reader from
+            # seeing a half-written JSON document.
+            tmp = output_path.with_suffix(".json.tmp")
+            tmp.write_text(package_to_json(package), encoding="utf-8")
+            tmp.replace(output_path)
             output_kind = "json"
             run.complete_stage(
                 "generate_report",
@@ -296,28 +421,35 @@ def analyze_stock(
                     "artifact": str(output_path),
                 },
             )
+            _report_stage(stage_progress, "generate_report", "done", "分析报告生成完成")
 
         if evidence_path is not None:
             run.stages["generate_report"]["evidence_artifact"] = str(evidence_path)
 
         chart_path = None
         if validated.chart:
+            _check_cancel(cancel_event)
             stage_started = time.monotonic()
             _notify(progress, "正在生成 K 线图…")
+            _report_stage(stage_progress, "render_chart", "running", "正在生成 K 线图…")
             chart_path = _create_chart(
                 validated.ticker,
                 stock_info,
                 daily,
                 validated.date or "",
+                run.run_id,
             )
             run.complete_stage(
                 "render_chart",
                 elapsed_ms=_elapsed_ms(stage_started),
                 details={"artifact": str(chart_path)},
             )
+            _report_stage(stage_progress, "render_chart", "done", "K 线图生成完成")
 
         _notify(progress, "分析完成")
+        _report_stage(stage_progress, "finish", "running", "分析完成")
         run.finish()
+        _report_stage(stage_progress, "finish", "done", "完成")
         _persist_run_record(run_store, run)
         return AnalysisResult(
             ticker=validated.ticker,
@@ -328,6 +460,11 @@ def analyze_stock(
             chart_path=chart_path,
             tokens=tokens,
         )
+    except AnalysisCancelledError:
+        if run.outcome == "running":
+            run.finish("cancelled")
+        _persist_run_record(run_store, run)
+        raise
     except StockAnalysisError as exc:
         if run.outcome == "running":
             run.fail(type(exc).__name__, _safe_error_message(exc))
@@ -339,6 +476,91 @@ def analyze_stock(
         run.fail(type(exc).__name__, _safe_error_message(wrapped))
         _persist_run_record(run_store, run)
         raise wrapped from exc
+
+
+def analyze_batch(
+    requests: Sequence[AnalysisRequest],
+    *,
+    max_workers: int = 1,
+    cancel_event: threading.Event | None = None,
+    progress: ProgressCallback | None = None,
+    stage_progress: StageProgressCallback | None = None,
+    item_prefix: Callable[[int, int], str] | None = None,
+    gateway: Any | None = None,
+    llm_factory: Callable[[], Any] | None = None,
+) -> list[BatchItem]:
+    """Analyze several stocks through a bounded thread pool.
+
+    Each request is failure-isolated: one failing/cancelled item never aborts
+    the rest of the batch. Results are returned in input order. Data requests
+    are additionally throttled by the provider rate limiter and LLM calls by
+    their own semaphore, so batch concurrency stays within configured bounds.
+
+    ``progress``/``stage_progress``/``item_prefix`` are optional GUI wiring for
+    batch progress display: stage messages are prefixed with
+    ``item_prefix(item_index, total)`` (e.g. ``[3/8]``). CLI callers omit them
+    and behavior is byte-for-byte unchanged.
+
+    ``gateway``/``llm_factory`` are lightweight dependency-injection hooks
+    (ROADMAP L226): when omitted the pipeline constructs its production
+    ``DataGateway``/``LLMClient`` exactly as before; when provided they are
+    forwarded to every :func:`analyze_stock` item (and only injected into the
+    item kwargs when not None, preserving the default kwargs contract).
+    """
+    items = [BatchItem(request=req) for req in requests]
+    workers = max(1, max_workers)
+
+    def prefixed(index: int, total: int) -> StageProgressCallback | None:
+        if stage_progress is None:
+            return None
+        if item_prefix is None:
+            return stage_progress
+        prefix = item_prefix(index, total)
+
+        def forward(stage: str, status: str, message: str) -> None:
+            stage_progress(stage, status, f"{prefix} {message}")
+
+        return forward
+
+    def item_kwargs(index: int, total: int) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"cancel_event": cancel_event}
+        if progress is not None:
+            kwargs["progress"] = progress
+        cb = prefixed(index, total)
+        if cb is not None:
+            kwargs["stage_progress"] = cb
+        if gateway is not None:
+            kwargs["gateway"] = gateway
+        if llm_factory is not None:
+            kwargs["llm_factory"] = llm_factory
+        return kwargs
+
+    if workers == 1:
+        # Serial path: identical to the historic loop, still failure-isolated.
+        for index, item in enumerate(items):
+            try:
+                item.result = analyze_stock(
+                    item.request, **item_kwargs(index, len(items))
+                )
+            except Exception as exc:
+                item.error = _safe_error_message(exc)
+        return items
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_index = {
+            executor.submit(
+                analyze_stock, req, **item_kwargs(index, len(requests))
+            ): index
+            for index, req in enumerate(requests)
+        }
+        for future in as_completed(future_to_index):
+            item = items[future_to_index[future]]
+            try:
+                item.result = future.result()
+            except Exception as exc:
+                item.error = _safe_error_message(exc)
+
+    return items
 
 
 def estimate_cost(usage: dict[str, Any]) -> float:
@@ -357,20 +579,44 @@ def _create_llm_report(
     mode: str,
     *,
     context: Mapping[str, Any] | None = None,
+    run_id: str | None = None,
+    token_callback: ProgressCallback | None = None,
+    cancel_event: threading.Event | None = None,
+    llm_factory: Callable[[], Any] | None = None,
 ) -> tuple[Path, dict[str, Any]]:
-    from src.reports.llm_client import LLMClient
+    from src.reports.llm_client import LLMClient, LLMStreamCancelledError
     from src.reports.renderer import render_report
 
     context = context or _route_context(mode, package)
-    llm = LLMClient()
+    llm = (llm_factory or LLMClient)()
     system_prompt = _load_system_prompt(mode)
     if context.get("prompt_text"):
         system_prompt += str(context["prompt_text"])
-    llm_output = llm.generate(
-        system_prompt,
-        json.dumps(package, ensure_ascii=False, indent=2),
-        deep=bool(MODES[mode]["deep"]),
-    )
+    user_prompt = json.dumps(package, ensure_ascii=False, indent=2)
+    if token_callback is not None:
+        # GUI streaming path: forward deltas as they arrive, but only render
+        # the final report after the full text is available (preview never
+        # persists partial output). Cancellation is honored between chunks by
+        # the client and translated into the app-layer error at the checkpoint.
+        collected: list[str] = []
+        try:
+            for delta in llm.generate_stream(
+                system_prompt,
+                user_prompt,
+                deep=bool(MODES[mode]["deep"]),
+                cancel_event=cancel_event,
+            ):
+                token_callback(delta)
+                collected.append(delta)
+        except LLMStreamCancelledError as exc:
+            raise AnalysisCancelledError(str(exc)) from None
+        llm_output = "".join(collected)
+    else:
+        llm_output = llm.generate(
+            system_prompt,
+            user_prompt,
+            deep=bool(MODES[mode]["deep"]),
+        )
     usage = llm.last_usage or {}
     config = get_config()
     output_path = render_report(
@@ -378,6 +624,7 @@ def _create_llm_report(
         llm_output=llm_output,
         llm_model=str(usage.get("model", config.llm_model)),
         tokens=usage,
+        run_id=run_id,
     )
     return Path(output_path), usage
 
@@ -404,16 +651,20 @@ def _create_chart(
     stock_info: dict[str, Any],
     daily: Any,
     analysis_date: str,
+    run_id: str,
 ) -> Path:
     from src.analysis.indicators import calc_all_indicators
+    from src.analysis.parameters import AnalysisParameters
     from src.reports.charts import create_kline_chart
 
     config = get_config()
     chart_dir = config.output_dir / "charts"
     chart_dir.mkdir(parents=True, exist_ok=True)
-    chart_path = chart_dir / f"{code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_kline.html"
+    chart_path = chart_dir / (
+        f"{code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{run_id[:8]}_kline.html"
+    )
     create_kline_chart(
-        calc_all_indicators(daily),
+        calc_all_indicators(daily, AnalysisParameters.from_config(config.analysis)),
         title=f"{stock_info['name']} ({code}) - {analysis_date}",
         output_path=str(chart_path),
     )
@@ -428,6 +679,28 @@ def _is_configured_secret(value: str) -> bool:
 def _notify(callback: ProgressCallback | None, message: str) -> None:
     if callback:
         callback(message)
+
+
+def _report_stage(
+    stage_progress: StageProgressCallback | None,
+    stage: str,
+    status: str,
+    message: str,
+) -> None:
+    if stage_progress:
+        stage_progress(stage, status, message)
+
+
+def _check_cancel(cancel_event: threading.Event | None) -> None:
+    """Raise at a safe checkpoint when cancellation was requested.
+
+    Checkpoints sit at stage boundaries *before* any artifact (report/chart/
+    evidence package) is written, so a cancelled run emits no partial output.
+    The GUI polls this event from its worker thread; Tk event-loop callbacks
+    only set it (threading.Event is thread-safe).
+    """
+    if cancel_event is not None and cancel_event.is_set():
+        raise AnalysisCancelledError("分析已由用户取消")
 
 
 def _elapsed_ms(started_at: float) -> int:
@@ -490,7 +763,9 @@ def _save_evidence_package(
         path = json_dir / (
             f"{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{run_id[:8]}_evidence.json"
         )
-        path.write_text(json.dumps(package, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(package, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
         return path
     except (OSError, TypeError, ValueError) as exc:
         logger.warning("Unable to persist evidence package ({})", type(exc).__name__)
