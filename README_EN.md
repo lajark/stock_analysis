@@ -86,7 +86,7 @@ The metadata command must be run from a clean, tagged release tree; it writes `c
 pytest tests/ -v
 ```
 
-The current suite covers settings persistence, ticker validation, knowledge retrieval, packaging configuration, release metadata, distribution scanning, and the evidence-first pipeline: 76 tests.
+The current suite covers settings persistence, ticker validation, knowledge retrieval, packaging configuration, release metadata, distribution scanning, and the evidence-first pipeline: 276 tests.
 
 ## Distribution and license
 
