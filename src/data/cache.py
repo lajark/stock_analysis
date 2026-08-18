@@ -35,9 +35,21 @@ def _try_read_parquet(path: Path) -> pd.DataFrame | None:
 
 
 def _atomic_parquet_write(frame: pd.DataFrame, path: Path) -> None:
-    """Write a Parquet frame atomically (tmp file + replace)."""
+    """Write a Parquet frame atomically (tmp file + replace).
+
+    A transient pyarrow/Windows dtype issue can reject a frame on write; the
+    operation is retried once with pandas-converted dtypes (object -> string),
+    which pyarrow writes reliably, so a flaky write never loses fresh data.
+    """
     tmp = path.with_suffix(path.suffix + ".tmp")
-    frame.to_parquet(tmp, index=False)
+    try:
+        frame.to_parquet(tmp, index=False)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        frame.convert_dtypes().to_parquet(tmp, index=False)
     tmp.replace(path)
 
 
@@ -311,8 +323,9 @@ class CacheManager:
         with _CACHE_LOCK:
             self._reload_meta()
             path = self._financial_path(code, report_type)
-            if path.exists():
-                existing = pd.read_parquet(path)
+            # 合并已有数据；损坏的既有缓存按 cache miss 全量替换，避免坏文件阻断保存
+            existing = _try_read_parquet(path) if path.exists() else None
+            if existing is not None:
                 combined = pd.concat([existing, df], ignore_index=True)
             else:
                 combined = df

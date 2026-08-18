@@ -77,7 +77,10 @@ class BatchConfig(BaseSettings):
 class LLMConfig(BaseSettings):
     """LLM 配置。"""
     default_mode: str = "quick"
-    max_tokens: int = 2000
+    max_tokens: int = 6000
+    # 深度模式输出上限。``None`` 表示不限制（交给供应商默认值），用于先测
+    # 出深度分析的实际输出长度，再回填一个带余量的上限。
+    max_tokens_deep: int | None = None
     temperature: float = 0.3
 
 
@@ -122,6 +125,12 @@ class AppConfig(BaseSettings):
     )
     llm_model: str = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
     llm_model_deep: str = Field(default="deepseek-v4-pro", alias="LLM_MODEL_DEEP")
+    # 可选备用证书（供资金流交叉核验等 CLI 研究脚本使用，不参与主分析流程）
+    mairui_licence: str = Field(default="", alias="MAIRUI_LICENCE")
+    biyingapi_appcode: str = Field(default="", alias="BIYINGAPI_APPCODE")
+    # 优化参数→分析联动：用户同意后写入，勾选开启后覆盖技术指标 MA 周期
+    analysis_ma_periods: str = Field(default="", alias="ANALYSIS_MA_PERIODS")
+    use_analysis_ma_override: str = Field(default="0", alias="USE_ANALYSIS_MA_OVERRIDE")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @property
@@ -164,12 +173,34 @@ _config: AppConfig | None = None
 _field_mapping: dict | None = None
 
 
+def _apply_user_overrides(config: AppConfig) -> None:
+    """Apply user-approved analysis overrides (e.g. optimized MA periods).
+
+    These come from the user-level settings file and are never auto-adopted:
+    ``USE_ANALYSIS_MA_OVERRIDE`` must be truthy for ``ANALYSIS_MA_PERIODS`` to
+    replace the default technical-indicator MA periods.
+    """
+    raw = config.analysis_ma_periods.strip()
+    enabled = config.use_analysis_ma_override.strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if not (enabled and raw):
+        return
+    try:
+        periods = [int(part) for part in raw.split(",") if part.strip()]
+        if periods:
+            config.analysis.ma_periods = periods
+    except ValueError:
+        pass
+
+
 def get_config() -> AppConfig:
     """获取全局配置单例。"""
     global _config
     if _config is None:
         yaml_data = _load_yaml_config()
         _config = AppConfig(_env_file=settings_path(), **yaml_data)  # type: ignore[call-arg]
+        _apply_user_overrides(_config)
     return _config
 
 
@@ -203,6 +234,12 @@ def get_user_settings(path: Path | None = None) -> dict[str, str]:
         ),
         "LLM_MODEL": current("LLM_MODEL", "llm_model", "deepseek-v4-flash"),
         "LLM_MODEL_DEEP": current("LLM_MODEL_DEEP", "llm_model_deep", "deepseek-v4-pro"),
+        "MAIRUI_LICENCE": current("MAIRUI_LICENCE", "mairui_licence"),
+        "BIYINGAPI_APPCODE": current("BIYINGAPI_APPCODE", "biyingapi_appcode"),
+        "ANALYSIS_MA_PERIODS": current("ANALYSIS_MA_PERIODS", "analysis_ma_periods"),
+        "USE_ANALYSIS_MA_OVERRIDE": current(
+            "USE_ANALYSIS_MA_OVERRIDE", "use_analysis_ma_override", "0"
+        ),
     }
 
 
@@ -213,6 +250,10 @@ def save_user_settings(
     llm_base_url: str,
     llm_model: str,
     llm_model_deep: str,
+    mairui_licence: str = "",
+    biyingapi_appcode: str = "",
+    analysis_ma_periods: str = "",
+    use_analysis_ma_override: str = "0",
     path: Path | None = None,
 ) -> Path:
     """Persist supported settings atomically and reload application configuration."""
@@ -222,6 +263,10 @@ def save_user_settings(
         "LLM_BASE_URL": llm_base_url.strip(),
         "LLM_MODEL": llm_model.strip(),
         "LLM_MODEL_DEEP": llm_model_deep.strip(),
+        "MAIRUI_LICENCE": mairui_licence.strip(),
+        "BIYINGAPI_APPCODE": biyingapi_appcode.strip(),
+        "ANALYSIS_MA_PERIODS": analysis_ma_periods.strip(),
+        "USE_ANALYSIS_MA_OVERRIDE": use_analysis_ma_override.strip(),
     }
     for key, value in values.items():
         if "\n" in value or "\r" in value:

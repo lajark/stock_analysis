@@ -135,6 +135,18 @@ def test_gateway_uses_fresh_cache_before_primary_daily_call() -> None:
     assert result.daily.equals(cache.daily)
 
 
+def test_fetch_daily_bars_does_not_require_stock_info() -> None:
+    """Backtests only need price bars; a stock-info outage must not block them."""
+    primary = FakeProvider("tushare", fail={"get_stock_basic"})
+    gateway = DataGateway(primary=primary, fallback=None, cache=FakeCache(_daily(), fresh=True))
+
+    result = gateway.fetch_daily_bars("600519.SH", "20240101", "2026-08-14")
+
+    assert not result.daily.empty
+    assert "get_stock_basic" not in primary.calls
+    assert result.providers["daily"] == "cache"
+
+
 def test_gateway_falls_back_for_critical_market_data() -> None:
     primary = FakeProvider("tushare", fail={"get_stock_basic", "get_daily"})
     fallback = FakeProvider("akshare")
@@ -159,7 +171,59 @@ def test_gateway_keeps_unsupported_financial_fallback_explicitly_missing() -> No
     assert result.providers["income"] == "unavailable"
     assert result.quality["income"] == "partial"
     assert "get_income" not in fallback.calls
-    assert any("AkShare 不提供等价财务数据" in warning for warning in result.warnings)
+    assert any("财务数据获取失败" in warning for warning in result.warnings)
+
+
+def test_gateway_financial_failure_retries_once_and_recovers() -> None:
+    calls = {"n": 0}
+
+    class FlakyIncomeProvider:
+        name = "flaky"
+
+        def get_stock_basic(self, code: str):
+            return {"code": code, "name": "测试"}
+
+        def get_daily(self, code: str, start_date: str, end_date: str):
+            return _daily()
+
+        def get_daily_basic(self, code: str, trade_date: str):
+            return {"pe_ttm": 20.0}
+
+        def get_adj_factor(self, code: str, start_date: str, end_date: str):
+            return pd.DataFrame(
+                {
+                    "trade_date": [pd.Timestamp("2026-08-13"), pd.Timestamp("2026-08-14")],
+                    "adj_factor": [2.0, 4.0],
+                }
+            )
+
+        def get_moneyflow(self, code: str, start_date: str, end_date: str):
+            return pd.DataFrame()
+
+        def get_income(self, code: str, start_date: str, end_date: str):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient")
+            return pd.DataFrame({"end_date": [pd.Timestamp("2025-12-31")]})
+
+        def get_balance_sheet(self, code: str, start_date: str, end_date: str):
+            return pd.DataFrame()
+
+        def get_cashflow(self, code: str, start_date: str, end_date: str):
+            return pd.DataFrame()
+
+        def get_fina_indicator(self, code: str, start_date: str, end_date: str):
+            return pd.DataFrame()
+
+    gateway = DataGateway(
+        primary=FlakyIncomeProvider(), fallback=None, cache=FakeCache()
+    )
+    result = gateway.fetch("600519.SH", "20240101", "2026-08-14")
+    assert calls["n"] == 2
+    assert not result.income.empty
+    assert result.providers["income"] == "flaky"
+    assert result.quality["income"] == "ok"
+    assert any("自动重试" in warning for warning in result.warnings)
 
 
 def test_gateway_raises_when_critical_data_has_no_provider_or_cache() -> None:

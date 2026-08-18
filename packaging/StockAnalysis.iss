@@ -1,6 +1,6 @@
 #define MyAppName "股票分析工具"
 #define MyAppEnglishName "StockAnalysis"
-#define MyAppVersion "1.2.1"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "stock_analysis"
 #define MyAppExeName "StockAnalysis.exe"
 
@@ -22,6 +22,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupLogging=yes
+; 静默更新时自动关闭运行中的应用再替换文件（用户数据目录 %LOCALAPPDATA%\StockAnalysis 不被安装器触碰）
+CloseApplications=yes
+CloseApplicationsFilter={#MyAppExeName}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

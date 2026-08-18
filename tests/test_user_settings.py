@@ -26,6 +26,10 @@ def test_save_and_load_user_settings(tmp_path: Path) -> None:
         "LLM_BASE_URL": "https://example.com/v1",
         "LLM_MODEL": "normal-model",
         "LLM_MODEL_DEEP": "deep-model",
+        "MAIRUI_LICENCE": "",
+        "BIYINGAPI_APPCODE": "",
+        "ANALYSIS_MA_PERIODS": "",
+        "USE_ANALYSIS_MA_OVERRIDE": "0",
     }
 
 

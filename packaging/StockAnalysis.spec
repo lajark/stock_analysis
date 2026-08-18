@@ -7,19 +7,29 @@ from PyInstaller.utils.hooks import collect_all
 project_root = Path(SPECPATH).parent
 
 akshare_datas, akshare_binaries, akshare_hiddenimports = collect_all("akshare")
+tkweb_datas, tkweb_binaries, tkweb_hiddenimports = collect_all("tkinterweb")
+tkhtml_datas, tkhtml_binaries, tkhtml_hiddenimports = collect_all("tkinterweb_tkhtml")
+# pywebview (Web GUI shell): collect its platform modules + CLI bridge assets.
+webview_datas, webview_binaries, webview_hiddenimports = collect_all("webview")
 
 datas = [
     (str(project_root / "config"), "config"),
     (str(project_root / "knowledge_base"), "knowledge_base"),
     (str(project_root / "src" / "reports" / "prompts"), "src/reports/prompts"),
-] + akshare_datas
+    (str(project_root / "src" / "app" / "webgui" / "static"), "src/app/webgui/static"),
+] + akshare_datas + tkweb_datas + tkhtml_datas + webview_datas
 
 a = Analysis(
-    [str(project_root / "src" / "app" / "gui.py")],
+    [str(project_root / "src" / "app" / "webgui" / "app.py")],
     pathex=[str(project_root)],
-    binaries=akshare_binaries,
+    binaries=akshare_binaries + tkweb_binaries + tkhtml_binaries + webview_binaries,
     datas=datas,
-    hiddenimports=akshare_hiddenimports,
+    hiddenimports=(
+        akshare_hiddenimports
+        + tkweb_hiddenimports
+        + tkhtml_hiddenimports
+        + webview_hiddenimports
+    ),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -31,7 +41,6 @@ a = Analysis(
         "matplotlib",
         "mypy",
         "notebook",
-        "pyarrow",
         "pytest",
         "ruff",
         "scipy",

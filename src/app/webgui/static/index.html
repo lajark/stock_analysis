@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>股票分析工具</title>
+<link rel="stylesheet" href="/static/style.css">
+<!-- marked.js 用于 Markdown 渲染（CDN；离线时降级为纯文本） -->
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+</head>
+<body>
+
+<!-- 顶部应用栏（玻璃） -->
+<header class="appbar glass" id="appbar">
+  <div class="brand">
+    <div class="brand-title">股票分析工具</div>
+    <div class="brand-sub" id="brand-version">本地分析 · 手动触发 · AI 报告可选</div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="analysis">分析</button>
+    <button class="tab" data-tab="backtest">回测 / 优化</button>
+    <button class="tab" data-tab="settings">设置</button>
+    <button class="tab" data-tab="help">帮助</button>
+  </nav>
+  <div class="appbar-actions">
+    <div class="seg" role="group" aria-label="主题">
+      <button class="seg-btn" data-theme-set="light" title="浅色">浅</button>
+      <button class="seg-btn active" data-theme-set="dark" title="深色">深</button>
+    </div>
+    <div class="seg" role="group" aria-label="字号">
+      <button class="seg-btn" id="font-minus" title="减小字号">A-</button>
+      <button class="seg-btn" id="font-plus" title="增大字号">A+</button>
+    </div>
+    <span class="meta" id="font-label">16px</span>
+    <span class="meta" id="status-dot" title="本地服务状态">● 本机运行</span>
+  </div>
+</header>
+
+<main class="content">
+
+  <!-- ===================== 分析 ===================== -->
+  <section class="page active" id="page-analysis">
+    <div class="grid bento">
+      <div class="glass card">
+        <h2 class="card-title">分析参数</h2>
+        <label class="field">
+          <span class="label">股票代码（可多只，逗号/空格分隔）</span>
+          <input id="ticker" class="input" placeholder="600519 或 600519.SH, 000858" value="600519">
+        </label>
+        <label class="field">
+          <span class="label">分析模式</span>
+          <select id="mode" class="input"></select>
+        </label>
+        <label class="check"><input type="checkbox" id="use-llm" checked> 使用 AI 生成中文报告（消耗 Token）</label>
+        <label class="check"><input type="checkbox" id="chart"> 同时生成 K 线图</label>
+        <label class="check"><input type="checkbox" id="use-params" disabled> 使用策略建议参数</label>
+        <div class="row-gap"></div>
+        <div class="btn-row">
+          <button class="btn primary" id="analyze-btn">开始分析</button>
+          <button class="btn" id="cancel-btn" disabled>取消</button>
+        </div>
+        <div class="progress-wrap" id="progress-wrap" hidden>
+          <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+          <div class="stage" id="stage-line"></div>
+        </div>
+        <div class="status" id="status-line">准备就绪</div>
+      </div>
+
+      <div class="glass card preview-card">
+        <div class="card-head">
+          <h2 class="card-title">结果预览</h2>
+          <div class="head-actions">
+            <button class="btn ghost" id="toggle-view">渲染视图</button>
+            <button class="btn ghost" id="open-file" disabled>打开结果文件</button>
+            <button class="btn ghost" id="open-dir">打开输出目录</button>
+          </div>
+        </div>
+        <div class="preview split hidden" id="preview-split">
+          <div class="doc-scroll">
+            <article class="doc markdown" id="preview-md"></article>
+          </div>
+          <div class="chart-pane" id="chart-pane" hidden>
+            <iframe id="chart-frame" title="K 线图"></iframe>
+          </div>
+        </div>
+        <div class="preview text hidden" id="preview-text">
+          <pre class="raw" id="preview-raw"></pre>
+        </div>
+        <div class="empty" id="preview-empty">尚无分析结果</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 回测 / 优化 ===================== -->
+  <section class="page" id="page-backtest">
+    <div class="grid bento bt">
+      <div class="glass card">
+        <h2 class="card-title">回测与参数优化</h2>
+        <div class="strategy-badge" id="strategy-badge"></div>
+        <label class="field">
+          <span class="label">股票代码</span>
+          <input id="bt-ticker" class="input" value="600519.SH">
+        </label>
+        <div class="row-2">
+          <label class="field">
+            <span class="label">开始日期</span>
+            <input id="bt-start" class="input" value="2024-01-01">
+          </label>
+          <label class="field">
+            <span class="label">结束日期</span>
+            <input id="bt-end" class="input" value="2026-01-01">
+          </label>
+        </div>
+        <div id="bt-params"></div>
+        <label class="field">
+          <span class="label">优化目标</span>
+          <select id="bt-objective" class="input">
+            <option value="sharpe">夏普比率</option>
+            <option value="total_return">总收益</option>
+            <option value="calmar">Calmar</option>
+            <option value="robust">稳健分</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="label">参数优化网格（每参数以逗号分隔）</span>
+          <div id="bt-grids"></div>
+        </label>
+        <div class="btn-row">
+          <button class="btn primary" id="bt-run">运行回测</button>
+          <button class="btn" id="bt-optimize">参数优化</button>
+        </div>
+        <div class="status" id="bt-status">就绪</div>
+      </div>
+
+      <div class="glass card preview-card">
+        <div class="card-head">
+          <h2 class="card-title">回测结果</h2>
+          <button class="btn accent" id="adopt-btn" hidden>采用建议参数用于分析</button>
+        </div>
+        <div class="doc-scroll">
+          <article class="doc markdown" id="bt-result"></article>
+        </div>
+        <div class="empty" id="bt-empty">尚无回测结果</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 设置 ===================== -->
+  <section class="page" id="page-settings">
+    <div class="grid bento settings">
+      <div class="glass card">
+        <h2 class="card-title">凭据与模型配置</h2>
+        <label class="field">
+          <span class="label">Tushare Token <em>*</em></span>
+          <input id="set-tushare" class="input" type="password" placeholder="TUSHARE_TOKEN">
+        </label>
+        <label class="field">
+          <span class="label">LLM API Key</span>
+          <input id="set-llm-key" class="input" type="password" placeholder="LLM_API_KEY">
+        </label>
+        <label class="field">
+          <span class="label">LLM 接口地址</span>
+          <input id="set-base-url" class="input" value="https://dashscope.aliyuncs.com/compatible-mode/v1">
+        </label>
+        <label class="field">
+          <span class="label">普通模型</span>
+          <input id="set-model" class="input" value="deepseek-v4-flash">
+        </label>
+        <label class="field">
+          <span class="label">深度分析模型</span>
+          <input id="set-deep-model" class="input" value="deepseek-v4-pro">
+        </label>
+        <label class="field">
+          <span class="label">麦蕊 Licence（可选，供资金流交叉核验）</span>
+          <input id="set-mairui" class="input" type="password" placeholder="可选">
+        </label>
+        <label class="field">
+          <span class="label">Biyingapi AppCode（可选，备用数据接口）</span>
+          <input id="set-biying" class="input" type="password" placeholder="可选">
+        </label>
+        <label class="check"><input type="checkbox" id="set-show-secret"> 显示密钥</label>
+        <label class="field">
+          <span class="label">分析 MA 周期（策略建议参数，逗号分隔）</span>
+          <input id="set-ma-periods" class="input" placeholder="留空使用默认 5,10,20,60">
+        </label>
+        <label class="check"><input type="checkbox" id="set-use-params"> 勾选使用策略建议参数</label>
+        <div class="btn-row">
+          <button class="btn primary" id="save-settings">保存设置</button>
+          <button class="btn ghost" id="settings-status" disabled>未保存</button>
+        </div>
+        <div class="meta">「保存设置」一次性保存上方所有字段（含可选备用证书与策略建议参数）；仅保存在本机用户目录。</div>
+      </div>
+
+      <div class="glass card">
+        <h2 class="card-title">策略（开放，可编辑）</h2>
+        <div class="meta" id="strategy-info"></div>
+        <div class="doc-scroll code-editor">
+          <textarea id="strategy-src" class="code-input" spellcheck="false"></textarea>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" id="strategy-save">保存策略</button>
+          <button class="btn ghost danger-hover" id="strategy-reset">恢复内置策略</button>
+          <span class="meta" id="strategy-status"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 帮助 ===================== -->
+  <section class="page" id="page-help">
+    <div class="glass card full">
+      <div class="card-head">
+        <h2 class="card-title">使用说明</h2>
+        <div class="head-actions">
+          <button class="btn" id="check-update">检查更新</button>
+          <button class="btn primary" id="install-update" hidden>下载并安装更新</button>
+        </div>
+      </div>
+      <div class="meta" id="update-status"></div>
+      <div class="doc-scroll tall">
+        <article class="doc markdown" id="help-guide"></article>
+      </div>
+      <div class="doc-scroll update hidden" id="update-result">
+        <article class="doc markdown" id="update-md"></article>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -19,6 +19,7 @@ from src.app.service import (
     AnalysisResult,
     BatchItem,
 )
+from src.app.update_check import version_gt
 
 
 class _Var:
@@ -46,10 +47,17 @@ class _BoolVar:
 class _Button:
     def __init__(self) -> None:
         self.state = "normal"
+        self.mapped = False
 
     def configure(self, **kwargs) -> None:
         if "state" in kwargs:
             self.state = kwargs["state"]
+
+    def grid(self, *args, **kwargs) -> None:
+        self.mapped = True
+
+    def grid_remove(self) -> None:
+        self.mapped = False
 
 
 class _Progress:
@@ -68,6 +76,7 @@ class _Preview:
         self.state = "disabled"
         self.text = ""
         self.see_calls: list[str] = []
+        self.mapped = False
 
     def configure(self, **kwargs) -> None:
         self.state = kwargs.get("state", self.state)
@@ -83,6 +92,15 @@ class _Preview:
 
     def see(self, index: str) -> None:
         self.see_calls.append(index)
+
+    def load_html(self, content: str) -> None:
+        self.text = content
+
+    def grid(self, *args, **kwargs) -> None:
+        self.mapped = True
+
+    def grid_remove(self) -> None:
+        self.mapped = False
 
 
 class _Root:
@@ -110,7 +128,12 @@ def _make_app(**overrides) -> StockAnalysisApp:
     app.analyze_button = _Button()
     app.open_button = _Button()
     app.cancel_button = _Button()
-    app.preview = _Preview()
+    app._preview_text = _Preview()
+    app._preview_html = _Preview()
+    app._preview_toggle = _Button()
+    app._preview_mode = "text"
+    app._preview_content_raw = ""
+    app._preview_font_size = 14
     app.notebook = _Notebook()
     app.settings_page = "settings_page"
     app.root = _Root()
@@ -153,10 +176,10 @@ def test_token_events_append_streaming_preview() -> None:
     app.events.put(("token", "你好"))
     app.events.put(("token", "，世界"))
     app._process_events()
-    assert app.preview.text == "你好，世界"
+    assert app._preview_text.text == "你好，世界"
     assert "流式输出中" in app.stage_var.value
     # Streaming stage hint set exactly once; both deltas scrolled into view.
-    assert app.preview.see_calls == ["end", "end"]
+    assert app._preview_text.see_calls == ["end", "end"]
 
 
 def test_worker_stream_then_cancel_keeps_partial_preview(
@@ -171,7 +194,7 @@ def test_worker_stream_then_cancel_keeps_partial_preview(
     _run_worker(app)
     app._process_events()
     # Partial streamed preview survives on screen (never persisted); UI resets.
-    assert app.preview.text == "部分预览文本"
+    assert app._preview_text.text == "部分预览文本"
     assert app.status_var.value == "分析已取消：未生成报告"
     assert app.analyze_button.state == "normal"
     assert app.cancel_button.state == "disabled"
@@ -223,7 +246,7 @@ def test_finished_event_updates_ui_and_preview(tmp_path) -> None:
     app.events.put(("finished", result))
     app._process_events()
     assert app.status_var.value.startswith("完成：测试股票")
-    assert app.preview.text == "# 测试报告"
+    assert app._preview_text.text == "# 测试报告"
     assert app.current_result is result
     assert app.analyze_button.state == "normal"
     assert app.open_button.state == "normal"
@@ -284,6 +307,17 @@ def test_split_tickers_splits_separators() -> None:
     ]
     assert _split_tickers("  600519, 000858  ") == ["600519", "000858"]
     assert _split_tickers("") == []
+
+
+def test_version_gt_semver() -> None:
+    # Numeric comparison, not lexicographic: 1.2.10 > 1.2.9.
+    assert version_gt("1.2.10", "1.2.9") is True
+    assert version_gt("1.2.9", "1.2.10") is False
+    # Equal and major/minor boundaries.
+    assert version_gt("1.2.1", "1.2.1") is False
+    assert version_gt("2.0.0", "1.9.9") is True
+    assert version_gt("1.3", "1.2.1") is True
+    assert version_gt("1.2.1", "1.3") is False
 
 
 def test_start_analysis_batch_path(monkeypatch) -> None:
@@ -374,9 +408,9 @@ def test_batch_done_event_updates_ui(tmp_path) -> None:
     app.events.put(("batch_done", [ok_item, err_item]))
     app._process_events()
     assert app.status_var.value == "批量完成：1/2 只成功"
-    assert "✓ [1/2] 600519.SH 贵州茅台 — 2.5s" in app.preview.text
-    assert str(out) in app.preview.text
-    assert "✗ [2/2] 123456 — 股票代码应为 6 位数字" in app.preview.text
+    assert "✓ [1/2] 600519.SH 贵州茅台 — 2.5s" in app._preview_text.text
+    assert str(out) in app._preview_text.text
+    assert "✗ [2/2] 123456 — 股票代码应为 6 位数字" in app._preview_text.text
     assert app.open_button.state == "disabled"
     assert app.cancel_button.state == "disabled"
     assert app.analyze_button.state == "normal"
@@ -393,5 +427,5 @@ def test_batch_cancelled_event_updates_ui() -> None:
     app.events.put(("batch_cancelled", [ok_item, cancelled_item]))
     app._process_events()
     assert app.status_var.value == "批量已取消：已分析 1/2 只"
-    assert "✓ [1/2] 600519.SH" in app.preview.text
-    assert "○ [2/2] 000858.SZ — 已取消" in app.preview.text
+    assert "✓ [1/2] 600519.SH" in app._preview_text.text
+    assert "○ [2/2] 000858.SZ — 已取消" in app._preview_text.text

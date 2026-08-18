@@ -361,7 +361,7 @@ def backtest(
     """运行只做多、T+1 开盘成交的研究回测。"""
     try:
         code = _validate_ticker(ticker)
-        data = DataGateway().fetch_market_data(
+        data = DataGateway().fetch_daily_bars(
             code, start_date, end_date, adjustment=adjustment
         )
         result = run_backtest(
@@ -426,7 +426,7 @@ def optimize(
     """在训练集选参，并独立报告验证集和测试集结果。"""
     try:
         code = _validate_ticker(ticker)
-        data = DataGateway().fetch_market_data(
+        data = DataGateway().fetch_daily_bars(
             code, start_date, end_date, adjustment=adjustment
         )
         result = optimize_ma_cross(
@@ -510,7 +510,7 @@ def optimize_rolling(
     slow_values = _parse_int_grid(slow_grid)
     try:
         code = _validate_ticker(ticker)
-        data = DataGateway().fetch_market_data(
+        data = DataGateway().fetch_daily_bars(
             code, start_date, end_date, adjustment=adjustment
         )
         result = optimize_ma_cross_rolling(

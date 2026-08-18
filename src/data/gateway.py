@@ -68,10 +68,10 @@ class DataGateway:
     """Fetch normalized datasets through cache → primary → fallback."""
 
     _FINANCIAL_DATASETS = {
-        "income": "income",
-        "balance_sheet": "balance_sheet",
-        "cashflow": "cashflow",
-        "fina_indicator": "fina_indicator",
+        "income": "get_income",
+        "balance_sheet": "get_balance_sheet",
+        "cashflow": "get_cashflow",
+        "fina_indicator": "get_fina_indicator",
     }
 
     def __init__(
@@ -199,6 +199,46 @@ class DataGateway:
             adjustment=adjustment,
         )
 
+    def fetch_daily_bars(
+        self,
+        code: str,
+        start_date: str,
+        end_date: str,
+        *,
+        adjustment: AdjustmentMode = "none",
+    ) -> StockDataBundle:
+        """Fetch only the daily price series; backtests do not need stock info.
+
+        Unlike :meth:`fetch` / :meth:`fetch_market_data`, this never calls
+        ``get_stock_basic``, so a stock-information outage (which is a
+        *critical* dataset in the analysis path) cannot block a backtest that
+        only needs price bars.
+        """
+        if adjustment not in {"none", "qfq", "hfq"}:
+            raise ValueError("adjustment 必须是 none、qfq 或 hfq")
+        warnings: list[str] = []
+        daily, provider, status, messages = self._fetch_daily(code, start_date, end_date)
+        warnings.extend(messages)
+        if adjustment != "none":
+            factors, _, _, factor_messages = self._fetch_adjustment_factors(
+                code, start_date, end_date
+            )
+            daily = apply_price_adjustment(daily, factors, adjustment)
+            warnings.extend(factor_messages)
+        return StockDataBundle(
+            stock_info={},
+            daily=daily,
+            daily_basic={},
+            income=pd.DataFrame(),
+            balance_sheet=pd.DataFrame(),
+            cashflow=pd.DataFrame(),
+            fina_indicator=pd.DataFrame(),
+            adjustment=adjustment,
+            providers={"daily": provider},
+            quality={"daily": status},
+            warnings=warnings,
+        )
+
     def _fetch_critical(
         self,
         dataset: str,
@@ -309,28 +349,39 @@ class DataGateway:
         if cached is not None and not cached.empty:
             return cached, "cache", "ok", warnings
 
-        try:
-            value = getattr(self._primary, method_name)(code, start_date, end_date)
-            if value is None or value.empty:
-                warnings.append(f"{dataset}: 主数据源返回空数据")
-                return pd.DataFrame(), "unavailable", "partial", warnings
-            # Persist every version that was public by the requested date;
-            # canonical revision selection happens only in the returned view.
-            value = filter_financial_as_of(value, as_of=end_date)
-            if value.empty:
-                warnings.append(f"{dataset}: 过滤公告期后无可用数据")
-                return pd.DataFrame(), "unavailable", "partial", warnings
-            self._save_financial_cache(code, dataset, value, warnings)
-            return (
-                normalize_financial_frame(value, as_of=end_date),
-                self._primary.name,
-                "ok",
-                warnings,
-            )
-        except Exception as primary_error:
-            warnings.append(self._warning(dataset, self._primary.name, primary_error))
-            warnings.append(f"{dataset}: AkShare 不提供等价财务数据，保留为空")
-            return pd.DataFrame(), "unavailable", "partial", warnings
+        last_error: Exception | None = None
+        # One transient retry: a flaky provider reply or a first-write cache
+        # hiccup must not permanently mark fundamentals as missing.
+        for attempt in range(2):
+            try:
+                value = getattr(self._primary, method_name)(code, start_date, end_date)
+                if value is None or value.empty:
+                    warnings.append(f"{dataset}: 主数据源返回空数据")
+                    return pd.DataFrame(), "unavailable", "partial", warnings
+                # Persist every version that was public by the requested date;
+                # canonical revision selection happens only in the returned view.
+                value = filter_financial_as_of(value, as_of=end_date)
+                if value.empty:
+                    warnings.append(f"{dataset}: 过滤公告期后无可用数据")
+                    return pd.DataFrame(), "unavailable", "partial", warnings
+                self._save_financial_cache(code, dataset, value, warnings)
+                return (
+                    normalize_financial_frame(value, as_of=end_date),
+                    self._primary.name,
+                    "ok",
+                    warnings,
+                )
+            except Exception as error:  # noqa: BLE001 - surfaced as a warning
+                last_error = error
+                warnings.append(self._warning(dataset, self._primary.name, error))
+                if attempt == 0:
+                    warnings.append(f"{dataset}: 首次获取失败，自动重试一次")
+
+        warnings.append(
+            f"{dataset}: 财务数据获取失败"
+            f"（{type(last_error).__name__}），保留为空；可重新分析重试"
+        )
+        return pd.DataFrame(), "unavailable", "partial", warnings
 
     def _fetch_adjustment_factors(
         self,

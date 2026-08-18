@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.analysis.strategies import Strategy, load_strategy
 from src.data.adjustments import ADJUSTMENT_APPLICATION_VERSION
 
 
@@ -85,7 +86,12 @@ class CostModel:
 
 @dataclass(frozen=True)
 class BacktestSpec:
-    """Serializable specification for the first supported strategy."""
+    """Serializable specification for a backtest strategy.
+
+    ``strategy_params`` carries the effective strategy parameter values (the
+    built-in MA-cross uses ``ma_fast``/``ma_slow``; a user strategy may declare
+    extra parameters). When empty, the MA-cross fields below are used.
+    """
 
     strategy: str = "ma_cross"
     ma_fast: int = 20
@@ -94,6 +100,7 @@ class BacktestSpec:
     costs: CostModel = field(default_factory=CostModel)
     strategy_version: str = "ma-cross-v1"
     adjustment: str = "none"
+    strategy_params: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.strategy != "ma_cross":
@@ -109,6 +116,8 @@ class BacktestSpec:
 
     @property
     def parameters(self) -> dict[str, int]:
+        if self.strategy_params:
+            return dict(self.strategy_params)
         return {"ma_fast": int(self.ma_fast), "ma_slow": int(self.ma_slow)}
 
     def to_dict(self) -> dict[str, Any]:
@@ -332,6 +341,39 @@ def _signal_series(frame: pd.DataFrame, spec: BacktestSpec) -> pd.Series:
     return ((fast > slow) & fast.notna() & slow.notna()).astype(int)
 
 
+def _effective_params(
+    frame: pd.DataFrame,
+    spec: BacktestSpec,
+    strategy: Strategy,
+) -> dict[str, int]:
+    """Merge strategy defaults + spec override into the params the signal uses.
+
+    The built-in MA-cross strategy is driven by ``spec.ma_fast``/``spec.ma_slow``
+    (its legacy fields); a user strategy is driven by its own declared defaults,
+    with ``spec.strategy_params`` winning for any overlapping name.
+    """
+    if strategy.source == "builtin":
+        params: dict[str, int] = {
+            "ma_fast": int(spec.ma_fast),
+            "ma_slow": int(spec.ma_slow),
+        }
+        params.update(spec.strategy_params)
+        return params
+    params = dict(strategy.defaults)
+    params.update(spec.strategy_params)
+    params.setdefault("ma_fast", int(spec.ma_fast))
+    params.setdefault("ma_slow", int(spec.ma_slow))
+    return params
+
+
+def _signal_from_strategy(
+    frame: pd.DataFrame,
+    spec: BacktestSpec,
+    strategy: Strategy,
+) -> pd.Series:
+    return strategy.compute_signal(frame, _effective_params(frame, spec, strategy))
+
+
 def _annualized_return(total_return: float, dates: pd.Series) -> float:
     days = max(int((dates.iloc[-1] - dates.iloc[0]).days), 1)
     if total_return <= -1:
@@ -378,11 +420,24 @@ def run_backtest(
     daily: pd.DataFrame,
     *,
     spec: BacktestSpec | None = None,
+    strategy: Strategy | None = None,
 ) -> BacktestResult:
-    """Run a long-only moving-average crossover with T+1 open execution."""
+    """Run a long-only strategy with T+1 open execution.
+
+    ``strategy`` defaults to the loaded strategy (user override if present,
+    else the built-in MA-cross). Signals are formed from the close of T and
+    executed at the open of T+1.
+    """
     spec = spec or BacktestSpec()
+    strategy = strategy or load_strategy()
     frame = _prepare_daily(daily)
-    signals = _signal_series(frame, spec)
+    effective_params = _effective_params(frame, spec, strategy)
+    signals = _signal_from_strategy(frame, spec, strategy)
+    strategy_version = (
+        spec.strategy_version
+        if strategy.source == "builtin"
+        else f"{strategy.name}-user-v1"
+    )
     costs = spec.costs
     cash = float(spec.initial_cash)
     shares = 0
@@ -481,8 +536,8 @@ def run_backtest(
     if not trades:
         warnings.append("样本期内没有完成交易，收益指标不代表策略有效性")
     return BacktestResult(
-        strategy_version=spec.strategy_version,
-        parameters=spec.parameters,
+        strategy_version=strategy_version,
+        parameters=effective_params,
         costs=spec.costs.to_dict(),
         data_hash=_data_hash(frame),
         initial_cash=spec.initial_cash,
@@ -554,10 +609,13 @@ def _objective_value(result: BacktestResult, objective: str) -> float:
     raise BacktestError(f"不支持的优化目标：{objective}")
 
 
-def _parameter_sensitivity(candidates: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+def _parameter_sensitivity(
+    candidates: Sequence[Mapping[str, Any]],
+    parameter_names: Sequence[str] = ("ma_fast", "ma_slow"),
+) -> dict[str, dict[str, Any]]:
     """Summarize eligible objective values by each optimized parameter."""
     summary: dict[str, dict[str, Any]] = {}
-    for parameter_name in ("ma_fast", "ma_slow"):
+    for parameter_name in parameter_names:
         buckets: dict[str, list[float]] = {}
         for candidate in candidates:
             if not candidate.get("eligible", False):
@@ -593,15 +651,20 @@ def optimize_ma_cross(
     max_trials: int | None = None,
     time_budget_s: float | None = None,
     memory_budget_mb: int | None = None,
+    strategy: Strategy | None = None,
 ) -> OptimizationResult:
     """Select parameters on train only, then report validation and test results.
 
-    ``time_budget_s`` and ``memory_budget_mb`` are run-time budgets checked
-    between trials: when exceeded the best eligible candidate found so far is
-    kept and the run is marked ``*_budget_status = "exceeded"``. Memory is
-    measured by tracemalloc (Python heap only) and only starts when a budget is
-    configured, so the default run is untouched.
+    ``parameter_grid`` keys must match the strategy's declared parameters (the
+    built-in MA-cross uses ``ma_fast``/``ma_slow``; a user strategy may declare
+    its own). ``time_budget_s`` and ``memory_budget_mb`` are run-time budgets
+    checked between trials: when exceeded the best eligible candidate found so
+    far is kept and the run is marked ``*_budget_status = "exceeded"``. Memory
+    is measured by tracemalloc (Python heap only) and only starts when a budget
+    is configured, so the default run is untouched.
     """
+    strategy = strategy or load_strategy()
+    parameter_names = strategy.parameters
     optimization_started = time.perf_counter()
     if not 0 < train_ratio < 1 or not 0 < validation_ratio < 1:
         raise BacktestError("train_ratio 和 validation_ratio 必须在 (0, 1) 内")
@@ -619,20 +682,29 @@ def optimize_ma_cross(
         raise BacktestError("time_budget_s 必须为正数")
     if memory_budget_mb is not None and memory_budget_mb <= 0:
         raise BacktestError("memory_budget_mb 必须为正数")
-    if set(parameter_grid) != {"ma_fast", "ma_slow"}:
-        raise BacktestError("当前优化器只接受 ma_fast 和 ma_slow")
+    if set(parameter_grid) != set(parameter_names):
+        raise BacktestError(
+            f"参数网格必须匹配策略参数：{', '.join(parameter_names)}"
+        )
     frame = _prepare_daily(daily)
     train_end = int(len(frame) * train_ratio)
     validation_end = int(len(frame) * (train_ratio + validation_ratio))
     if min(train_end, validation_end - train_end, len(frame) - validation_end) < 2:
         raise BacktestError("样本太少，无法划分训练/验证/测试区间")
+
+    def _valid_combo(combo: dict[str, int]) -> bool:
+        if any(value <= 0 for value in combo.values()):
+            return False
+        if "ma_fast" in combo and "ma_slow" in combo:
+            return combo["ma_fast"] < combo["ma_slow"]
+        return True
+
     combinations = [
-        (fast, slow)
-        for fast, slow in itertools.product(
-            sorted({int(value) for value in parameter_grid["ma_fast"]}),
-            sorted({int(value) for value in parameter_grid["ma_slow"]}),
+        dict(zip(parameter_names, values))
+        for values in itertools.product(
+            *(sorted({int(v) for v in parameter_grid[name]}) for name in parameter_names)
         )
-        if fast > 0 and slow > 0 and fast < slow
+        if _valid_combo(dict(zip(parameter_names, values)))
     ]
     if not combinations:
         raise BacktestError("参数网格没有有效组合")
@@ -641,29 +713,30 @@ def optimize_ma_cross(
             f"有效参数组合数 {len(combinations)} 超过 max_trials={int(max_trials)}"
         )
     candidates: list[dict[str, Any]] = []
-    candidate_results: list[tuple[float, int, int, BacktestResult]] = []
+    candidate_results: list[tuple[float, dict[str, int], BacktestResult]] = []
     time_budget_stopped = False
     memory_budget_stopped = False
     if memory_budget_mb is not None:
         tracemalloc.start(1)
     try:
-        for fast, slow in combinations:
-            if fast <= 0 or slow <= 0 or fast >= slow:
-                continue
+        for combo in combinations:
+            params = dict(strategy.defaults)
+            params.update(combo)
+            spec = BacktestSpec(
+                strategy_params=params,
+                initial_cash=initial_cash,
+                costs=costs or CostModel(),
+                adjustment=adjustment,
+            )
             result = run_backtest(
                 frame.iloc[:train_end],
-                spec=BacktestSpec(
-                    ma_fast=fast,
-                    ma_slow=slow,
-                    initial_cash=initial_cash,
-                    costs=costs or CostModel(),
-                    adjustment=adjustment,
-                ),
+                spec=spec,
+                strategy=strategy,
             )
             value = _objective_value(result, objective)
             candidates.append(
                 {
-                    "parameters": {"ma_fast": fast, "ma_slow": slow},
+                    "parameters": dict(combo),
                     "objective_value": value,
                     "objective_version": "robust-v1" if objective == "robust" else None,
                     "score_components": _robust_score_components(result),
@@ -677,7 +750,7 @@ def optimize_ma_cross(
                 }
             )
             if result.trade_count >= min_trades:
-                candidate_results.append((value, fast, slow, result))
+                candidate_results.append((value, dict(combo), result))
             if _time_budget_exceeded(optimization_started, time_budget_s):
                 time_budget_stopped = True
                 break
@@ -698,16 +771,17 @@ def optimize_ma_cross(
         raise BacktestError("资源预算已耗尽，未产生合格候选")
     if not candidate_results:
         raise BacktestError("参数网格没有满足最小交易次数的组合")
-    candidate_results.sort(key=lambda row: (-row[0], row[1], row[2]))
+
+    def _combo_key(combo: dict[str, int]) -> tuple[tuple[str, int], ...]:
+        return tuple(sorted(combo.items()))
+
+    candidate_results.sort(key=lambda row: (-row[0], _combo_key(row[1])))
     rank_by_parameters = {
-        (row[1], row[2]): rank for rank, row in enumerate(candidate_results, start=1)
+        _combo_key(row[1]): rank for rank, row in enumerate(candidate_results, start=1)
     }
     for candidate in candidates:
-        parameters = candidate["parameters"]
-        candidate["rank"] = rank_by_parameters.get(
-            (parameters["ma_fast"], parameters["ma_slow"])
-        )
-    _, selected_fast, selected_slow, train_result = candidate_results[0]
+        candidate["rank"] = rank_by_parameters.get(_combo_key(candidate["parameters"]))
+    _, selected_params, train_result = candidate_results[0]
     objective_values = [row[0] for row in candidate_results]
     top_value = objective_values[0]
     runner_up = objective_values[1] if len(objective_values) > 1 else None
@@ -749,19 +823,22 @@ def optimize_ma_cross(
             if memory_budget_mb is not None
             else "not_configured"
         ),
-        "parameter_sensitivity": _parameter_sensitivity(candidates),
-        "ranking_method_version": "objective-desc-fast-slow-v1",
+        "parameter_sensitivity": _parameter_sensitivity(candidates, strategy.parameters),
+        "ranking_method_version": "objective-desc-params-v1",
         "method_version": "robust-v1" if objective == "robust" else "ranking-v1",
     }
     selected_spec = BacktestSpec(
-        ma_fast=selected_fast,
-        ma_slow=selected_slow,
+        strategy_params={**strategy.defaults, **selected_params},
         initial_cash=initial_cash,
         costs=costs or CostModel(),
         adjustment=adjustment,
     )
-    validation_result = run_backtest(frame.iloc[train_end:validation_end], spec=selected_spec)
-    test_result = run_backtest(frame.iloc[validation_end:], spec=selected_spec)
+    validation_result = run_backtest(
+        frame.iloc[train_end:validation_end], spec=selected_spec, strategy=strategy
+    )
+    test_result = run_backtest(
+        frame.iloc[validation_end:], spec=selected_spec, strategy=strategy
+    )
     split_dates = {
         "train_start": frame["trade_date"].iloc[0].strftime("%Y-%m-%d"),
         "train_end": frame["trade_date"].iloc[train_end - 1].strftime("%Y-%m-%d"),
@@ -775,7 +852,7 @@ def optimize_ma_cross(
     )
     return OptimizationResult(
         objective=objective,
-        selected_parameters={"ma_fast": selected_fast, "ma_slow": selected_slow},
+        selected_parameters=dict(selected_params),
         train=train_result,
         validation=validation_result,
         test=test_result,
@@ -801,6 +878,7 @@ def optimize_ma_cross_rolling(
     max_trials: int | None = None,
     time_budget_s: float | None = None,
     memory_budget_mb: int | None = None,
+    strategy: Strategy | None = None,
 ) -> RollingOptimizationResult:
     """Run chronological walk-forward optimization and report stability.
 
@@ -813,6 +891,8 @@ def optimize_ma_cross_rolling(
     set. Failed windows remain in the output so a sparse or unstable sample
     cannot be mistaken for a complete optimization.
     """
+    strategy = strategy or load_strategy()
+    parameter_names = strategy.parameters
     rolling_started = time.perf_counter()
     if objective not in {"sharpe", "total_return", "calmar", "robust"}:
         raise BacktestError(f"不支持的优化目标：{objective}")
@@ -837,8 +917,10 @@ def optimize_ma_cross_rolling(
     step = test_size if step_size is None else step_size
     if int(step) != step or int(step) <= 0:
         raise BacktestError("step_size 必须为正整数")
-    if set(parameter_grid) != {"ma_fast", "ma_slow"}:
-        raise BacktestError("当前优化器只接受 ma_fast 和 ma_slow")
+    if set(parameter_grid) != set(parameter_names):
+        raise BacktestError(
+            f"参数网格必须匹配策略参数：{', '.join(parameter_names)}"
+        )
 
     frame = _prepare_daily(daily)
     total_size = train_size + validation_size + test_size
@@ -876,6 +958,7 @@ def optimize_ma_cross_rolling(
                 min_trades=min_trades,
                 adjustment=adjustment,
                 max_trials=max_trials,
+                strategy=strategy,
             )
         except BacktestError as exc:
             message = str(exc)
@@ -1045,6 +1128,7 @@ def optimize_ma_cross_multi(
     max_trials: int | None = None,
     time_budget_s: float | None = None,
     memory_budget_mb: int | None = None,
+    strategy: Strategy | None = None,
 ) -> MultiOptimizationResult:
     """Aggregate rolling studies with equal weight per successful symbol.
 
@@ -1105,6 +1189,7 @@ def optimize_ma_cross_multi(
                 min_trades=min_trades,
                 adjustment=adjustment,
                 max_trials=max_trials,
+                strategy=strategy,
             )
         except BacktestError as exc:
             message = f"{symbol} 优化失败：{exc}"

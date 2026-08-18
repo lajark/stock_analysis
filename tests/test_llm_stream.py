@@ -304,7 +304,9 @@ class _FakeLLM:
 def _patch_render(
     monkeypatch: pytest.MonkeyPatch, tmp_path, captured: dict
 ) -> None:
-    def fake_render(package, llm_output, llm_model, tokens, output_path=None, run_id=None):
+    def fake_render(
+        package, llm_output, llm_model, tokens, output_path=None, run_id=None, **kwargs
+    ):
         captured["llm_output"] = llm_output
         captured["tokens"] = tokens
         report_path = tmp_path / "report.md"

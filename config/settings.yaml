@@ -55,7 +55,9 @@ batch:
 # LLM
 llm:
   default_mode: quick  # quick | deep | value
-  max_tokens: 4000
+  max_tokens: 6000
+  # 深度模式输出上限；按两次试跑实测（output 7973/3920，最大 7973）留约 50% 余量
+  max_tokens_deep: 12000
   temperature: 0.3
 
 # 报告

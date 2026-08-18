@@ -63,6 +63,7 @@ class LLMClient:
         self._model = config.llm_model
         self._model_deep = config.llm_model_deep
         self._max_tokens = config.llm.max_tokens
+        self._max_tokens_deep = config.llm.max_tokens_deep
         self._temperature = config.llm.temperature
         self._last_usage: dict | None = None
 
@@ -88,15 +89,20 @@ class LLMClient:
         # Serialize LLM calls across worker threads (batch concurrency is
         # separate from the data-request gate; default keeps LLM serial).
         with _llm_gate():
-            response = self._client.chat.completions.create(
-                model=model,
-                messages=[
+            # Deep mode may leave the cap unset (max_tokens_deep=None) so a
+            # trial can measure the natural output length before pinning one.
+            max_tokens = self._max_tokens_deep if deep else self._max_tokens
+            request: dict[str, Any] = {
+                "model": model,
+                "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=self._max_tokens,
-                temperature=self._temperature,
-            )
+                "temperature": self._temperature,
+            }
+            if max_tokens is not None:
+                request["max_tokens"] = max_tokens
+            response = self._client.chat.completions.create(**request)
 
             self._last_usage = {
                 "model": model,
@@ -129,30 +135,30 @@ class LLMClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
+        # Deep mode may leave the cap unset (max_tokens_deep=None) so a trial
+        # can measure the natural output length before pinning one.
+        max_tokens = self._max_tokens_deep if deep else self._max_tokens
         usage = None
         with _llm_gate():
             try:
-                response = self._client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    max_tokens=self._max_tokens,
-                    temperature=self._temperature,
-                    stream=True,
-                    stream_options={"include_usage": True},
-                )
+                request: dict[str, Any] = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": self._temperature,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+                if max_tokens is not None:
+                    request["max_tokens"] = max_tokens
+                response = self._client.chat.completions.create(**request)
             except BadRequestError:
                 # Some compatible endpoints reject stream_options entirely;
                 # fall back to a plain stream rather than dropping streaming.
                 logger.warning(
                     "Streaming provider rejected include_usage; retrying plain stream"
                 )
-                response = self._client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    max_tokens=self._max_tokens,
-                    temperature=self._temperature,
-                    stream=True,
-                )
+                request.pop("stream_options", None)
+                response = self._client.chat.completions.create(**request)
             try:
                 for chunk in response:
                     if cancel_event is not None and cancel_event.is_set():

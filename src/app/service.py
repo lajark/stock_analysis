@@ -625,6 +625,7 @@ def _create_llm_report(
         llm_model=str(usage.get("model", config.llm_model)),
         tokens=usage,
         run_id=run_id,
+        config_override=config,
     )
     return Path(output_path), usage
 

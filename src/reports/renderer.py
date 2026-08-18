@@ -34,12 +34,12 @@ REPORT_TEMPLATE = """# {{ stock_name }} ({{ stock_code }}) 股票分析报告
 
 | 类型 | 价位 | 距离当前价 | 强度 |
 |------|------|-----------|------|
-{% for s in price_levels.supports[:3] %}
+{%- for s in price_levels.supports[:3] %}
 | 支撑: {{ s.type }} | {{ s.price }} | {{ s.distance_pct }}% | {{ s.strength }} |
-{% endfor %}
-{% for r in price_levels.resistances[:3] %}
+{%- endfor %}
+{%- for r in price_levels.resistances[:3] %}
 | 阻力: {{ r.type }} | {{ r.price }} | {{ r.distance_pct }}% | {{ r.strength }} |
-{% endfor %}
+{%- endfor %}
 
 ### 交易信号
 
@@ -51,14 +51,14 @@ REPORT_TEMPLATE = """# {{ stock_name }} ({{ stock_code }}) 股票分析报告
 ### 3-6个月目标价
 
 **目标买入价**：
-{% for bt in price_levels.targets.buy_targets[:2] %}
+{%- for bt in price_levels.targets.buy_targets[:2] %}
 - {{ bt.price }} ({{ bt.reason }}, 置信度: {{ bt.confidence }})
-{% endfor %}
+{%- endfor %}
 
 **目标卖出价**：
-{% for st in price_levels.targets.sell_targets[:2] %}
+{%- for st in price_levels.targets.sell_targets[:2] %}
 - {{ st.price }} ({{ st.reason }}, 置信度: {{ st.confidence }})
-{% endfor %}
+{%- endfor %}
 {% endif %}
 
 ---
@@ -72,9 +72,9 @@ REPORT_TEMPLATE = """# {{ stock_name }} ({{ stock_code }}) 股票分析报告
 
 | 字段 | 上次值 | 本次值 |
 |------|--------|--------|
-{% for change in changes.changes[:10] %}
+{%- for change in changes.changes[:10] %}
 | {{ change.path }} | {{ change.before }} | {{ change.after }} |
-{% endfor %}
+{%- endfor %}
 {% endif %}
 
 ## 数据溯源
@@ -85,6 +85,9 @@ REPORT_TEMPLATE = """# {{ stock_name }} ({{ stock_code }}) 股票分析报告
 | 数据日期 | {{ meta.data_date }} |
 | 数据源 | {{ meta.data_provider }} |
 | 模型 | {{ llm_model }} |
+{% if ma_override_note %}
+| 参数说明 | {{ ma_override_note }} |
+{% endif %}
 {% if tokens.input_tokens is not none and tokens.output_tokens is not none %}
 | Token 消耗 | input={{ tokens.input_tokens }}, output={{ tokens.output_tokens }} |
 {% else %}
@@ -135,6 +138,7 @@ def render_report(
     tokens: dict[str, int],
     output_path: str | None = None,
     run_id: str | None = None,
+    config_override: Any = None,
 ) -> str:
     """渲染完整 Markdown 报告。
 
@@ -145,6 +149,8 @@ def render_report(
         tokens: Token 用量
         output_path: 输出文件路径，为 None 则自动生成
         run_id: 分析 run_id；自动生成文件名时作为唯一后缀，避免并发碰撞
+        config_override: 外部配置对象（含 analysis.ma_periods 等信息），
+                         用于报告注明"使用了策略建议参数"。
 
     Returns:
         报告文件路径。
@@ -156,6 +162,16 @@ def render_report(
     # Truncate oversized change values so the change table stays readable
     # (e.g. whole evidence lists that differ only in a few fields).
     changes = _shorten_change_values(package.get("changes"))
+
+    # 判断是否使用了策略建议参数覆盖
+    ma_override_note = ""
+    if config_override is not None:
+        raw = getattr(config_override, "analysis_ma_periods", "")
+        enabled = getattr(config_override, "use_analysis_ma_override", "0")
+        if raw and enabled.strip().lower() in {"1", "true", "yes", "on"}:
+            ma_override_note = (
+                f"技术指标 MA 周期使用策略建议参数：{config_override.analysis.ma_periods}"
+            )
 
     report = template.render(
         stock_name=stock["name"],
@@ -173,6 +189,7 @@ def render_report(
         llm_output=llm_output,
         llm_model=llm_model,
         tokens=tokens,
+        ma_override_note=ma_override_note,
     )
 
     # 写入文件
