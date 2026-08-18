@@ -365,10 +365,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, {"guide": USAGE_GUIDE_MD})
             return
         if route == "/api/check_update":
-            local, results, download_url = check_for_updates()
+            local, results, download_urls, release_page = check_for_updates()
             self._send_json(
                 HTTPStatus.OK,
-                {"local": local, "results": results, "download_url": download_url},
+                {
+                    "local": local,
+                    "results": results,
+                    "download_urls": download_urls,
+                    "download_url": download_urls[0] if download_urls else release_page,
+                    "release_page": release_page,
+                },
             )
             return
         if route == "/api/chart":
@@ -457,9 +463,18 @@ class Handler(BaseHTTPRequestHandler):
     # -- job workers ----------------------------------------------------------
 
     def _post_analyze(self, body: dict[str, Any]) -> None:
-        tickers = [t.strip() for t in body.get("tickers", []) if t.strip()]
-        if not tickers:
+        raw_tickers = [t.strip() for t in body.get("tickers", []) if t.strip()]
+        if not raw_tickers:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "至少需要一只股票代码"})
+            return
+        # Normalize (002001 -> 002001.SZ, 430047 -> 430047.BJ) at the entry,
+        # exactly like the desktop GUI and the backtest/optimize endpoints, so
+        # the primary source and per-symbol cache key are consistent; reject
+        # invalid codes before starting a job.
+        try:
+            tickers = [validate_ticker(t) for t in raw_tickers]
+        except Exception as exc:  # noqa: BLE001 - surface a readable message
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
         mode = str(body.get("mode", "quick"))
         use_llm = bool(body.get("use_llm", True))
@@ -800,55 +815,52 @@ class Handler(BaseHTTPRequestHandler):
     def _post_update_install(self, body: dict[str, Any]) -> None:
         """Download the installer and launch it silently; app exits afterwards.
 
-        The installer only ever writes to the install directory
+        Accepts a single legacy ``url`` or a ``urls`` fallback list (Gitee
+        first). The installer only ever writes to the install directory
         (``%LOCALAPPDATA%\\Programs\\StockAnalysis``); the user data directory
         (``%LOCALAPPDATA%\\StockAnalysis``) is never touched by an update.
         """
-        url = str(body.get("url", "")).strip()
-        if not url:
+        urls: list[str] = []
+        single = str(body.get("url", "") or "").strip()
+        if single:
+            urls.append(single)
+        for candidate in body.get("urls") or []:
+            candidate = str(candidate).strip()
+            if candidate and candidate not in urls:
+                urls.append(candidate)
+        if not urls:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "缺少安装包下载地址"})
             return
-        host = urllib.parse.urlparse(url).hostname or ""
-        if host not in _update_allowed_hosts():
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "仅允许官方发布源的安装包"})
-            return
+        for url in urls:
+            host = urllib.parse.urlparse(url).hostname or ""
+            if host not in _update_allowed_hosts():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "仅允许官方发布源的安装包"})
+                return
         if not CTX.begin_job():
             self._send_json(HTTPStatus.CONFLICT, {"error": "已有任务在运行"})
             return
-        self._send_json(HTTPStatus.ACCEPTED, {"started": True, "url": url})
-        threading.Thread(target=self._download_and_install, args=(url,), daemon=True).start()
+        self._send_json(HTTPStatus.ACCEPTED, {"started": True, "urls": urls})
+        threading.Thread(
+            target=self._download_and_install, args=(urls,), daemon=True
+        ).start()
 
-    def _download_and_install(self, url: str) -> None:
+    def _download_and_install(self, urls: list[str]) -> None:
         try:
             update_dir = user_data_root() / "updates"
             update_dir.mkdir(parents=True, exist_ok=True)
-            filename = Path(urllib.parse.urlparse(url).path).name or "update.exe"
-            target = update_dir / filename
-            part = target.with_suffix(target.suffix + ".part")
-
-            req = urllib.request.Request(
-                url, headers={"User-Agent": "stock-analysis/1.0"}
-            )
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                total = int(resp.headers.get("Content-Length") or 0)
-                received = 0
-                with open(part, "wb") as out:
-                    while True:
-                        chunk = resp.read(1 << 16)
-                        if not chunk:
-                            break
-                        out.write(chunk)
-                        received += len(chunk)
-                        CTX.bus.publish(
-                            {
-                                "type": "update_progress",
-                                "received": received,
-                                "total": total,
-                            }
-                        )
-            part.replace(target)
-            if not target.is_file() or target.stat().st_size == 0:
-                raise RuntimeError("安装包下载为空，已中止")
+            target: Path | None = None
+            last_error: Exception | None = None
+            for url in urls:
+                try:
+                    target = self._download_installer(url, update_dir)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    # Silent failover to the next source: log only, do not
+                    # surface a transient failure to the user.
+                    logger.warning("安装包下载失败，切换备用源 %s：%s", url, exc)
+            if target is None:
+                raise last_error or RuntimeError("未找到可用的安装包下载源")
 
             # 静默安装（Inno Setup 参数）；安装器不触碰用户数据目录。
             creationflags = 0
@@ -865,6 +877,37 @@ class Handler(BaseHTTPRequestHandler):
             CTX.bus.publish({"type": "update_error", "payload": str(exc)})
         finally:
             CTX.end_job()
+
+    def _download_installer(self, url: str, update_dir: Path) -> Path:
+        """Download a single installer candidate; raise on any failure."""
+        filename = Path(urllib.parse.urlparse(url).path).name or "update.exe"
+        target = update_dir / filename
+        part = target.with_suffix(target.suffix + ".part")
+
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "stock-analysis/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            received = 0
+            with open(part, "wb") as out:
+                while True:
+                    chunk = resp.read(1 << 16)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    received += len(chunk)
+                    CTX.bus.publish(
+                        {
+                            "type": "update_progress",
+                            "received": received,
+                            "total": total,
+                        }
+                    )
+        part.replace(target)
+        if not target.is_file() or target.stat().st_size == 0:
+            raise RuntimeError("安装包下载为空，已中止")
+        return target
 
     def _post_strategy(self, body: dict[str, Any]) -> None:
         action = str(body.get("action", "save"))

@@ -36,6 +36,13 @@ def analyze_valuation(
     return result
 
 
+def _round_metric(value: Any) -> float | None:
+    """Round a valuation metric to two decimals; None for missing or NaN."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    return round(float(value), 2)
+
+
 def _current_valuation(daily_basic: dict) -> dict:
     """当前估值指标。"""
     pe = daily_basic.get("pe_ttm")
@@ -43,9 +50,9 @@ def _current_valuation(daily_basic: dict) -> dict:
     ps = daily_basic.get("ps_ttm")
 
     return {
-        "pe_ttm": round(float(pe), 2) if pe is not None and not (isinstance(pe, float) and np.isnan(pe)) else None,
-        "pb": round(float(pb), 2) if pb is not None and not (isinstance(pb, float) and np.isnan(pb)) else None,
-        "ps_ttm": round(float(ps), 2) if ps is not None and not (isinstance(ps, float) and np.isnan(ps)) else None,
+        "pe_ttm": _round_metric(pe),
+        "pb": _round_metric(pb),
+        "ps_ttm": _round_metric(ps),
         "total_mv_yi": round(float(daily_basic.get("total_mv", 0) or 0) / 1e8, 2),
     }
 
@@ -109,7 +116,7 @@ def _valuation_summary(current: dict, percentiles: dict) -> str:
         elif pe > 0:
             parts.append(f"PE(TTM) {pe} 处于合理水平")
         else:
-            parts.append(f"PE(TTM) 为负值（亏损）")
+            parts.append("PE(TTM) 为负值（亏损）")
 
     if pb is not None:
         if pb > 5:

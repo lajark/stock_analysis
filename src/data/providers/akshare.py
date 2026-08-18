@@ -33,7 +33,11 @@ class AkShareProvider(DataProvider):
                 "industry": info.get("行业", ""),
                 "area": "",
                 "list_date": info.get("上市时间", ""),
-                "market": "SH" if code.endswith(".SH") else "SZ",
+                "market": (
+                    "SH"
+                    if code.endswith(".SH")
+                    else "BJ" if code.endswith(".BJ") else "SZ"
+                ),
             }
         except DataProviderError:
             raise
@@ -47,7 +51,7 @@ class AkShareProvider(DataProvider):
         self, code: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
         try:
-            symbol = code.replace(".SH", "").replace(".SZ", "")
+            symbol = code.replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
             df = ak.stock_zh_a_hist(
                 symbol=symbol,
                 period="daily",

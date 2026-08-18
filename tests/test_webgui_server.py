@@ -256,6 +256,40 @@ def test_concurrent_analyze_rejected(server, monkeypatch) -> None:
     thread.join(timeout=5)
 
 
+def test_analyze_normalizes_bare_tickers(server, monkeypatch) -> None:
+    """裸代码（含北交所）在入口规范化后再派发（002001 -> 002001.SZ）。"""
+    srv, mod, _ = server
+    captured: dict = {}
+
+    def fake_batch(requests, **kwargs):
+        captured["requests"] = requests
+        return []
+
+    monkeypatch.setattr("src.app.webgui.server.analyze_batch", fake_batch)
+    status, _ = _http(
+        srv.port,
+        "POST",
+        "/api/analyze",
+        {"tickers": ["002001", "430047.BJ"], "mode": "quick", "use_llm": False},
+    )
+    assert status == 202
+    _drain(mod, "batch_done")  # 等待后台线程派发
+    assert [r.ticker for r in captured["requests"]] == ["002001.SZ", "430047.BJ"]
+
+
+def test_analyze_rejects_invalid_ticker_before_job(server) -> None:
+    """非法代码在入口返回 400，不进入任务队列。"""
+    srv, _, _ = server
+    status, data = _http(
+        srv.port,
+        "POST",
+        "/api/analyze",
+        {"tickers": ["600519.BJ"]},
+    )
+    assert status == 400
+    assert "后缀有误" in data["error"]
+
+
 # ---------------------------------------------------------------------------
 # 回测 / 优化（mock 取数）
 # ---------------------------------------------------------------------------
@@ -379,6 +413,29 @@ def test_update_install_rejects_foreign_host(server) -> None:
         {"url": "https://evil.example.com/StockAnalysis-Setup-9.9.9.exe"},
     )
     assert status == 403
+
+
+def test_update_install_rejects_foreign_host_in_urls(server) -> None:
+    srv, _, _ = server
+    status, _ = _http(
+        srv.port,
+        "POST",
+        "/api/update/install",
+        {
+            "urls": [
+                "https://gitee.com/li_nanqi/stock_analysis/releases/download/"
+                "v1.3.0/StockAnalysis-Setup-1.3.0.exe",
+                "https://evil.example.com/StockAnalysis-Setup-9.9.9.exe",
+            ]
+        },
+    )
+    assert status == 403
+
+
+def test_update_install_rejects_missing_source(server) -> None:
+    srv, _, _ = server
+    status, _ = _http(srv.port, "POST", "/api/update/install", {})
+    assert status == 400
 
 
 def test_installer_asset_url_prefers_exe() -> None:

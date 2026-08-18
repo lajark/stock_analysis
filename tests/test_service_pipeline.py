@@ -185,7 +185,14 @@ class FakeLLM:
         self._error = error
         self.last_usage = {"model": "test-model", "input_tokens": 120, "output_tokens": 80}
 
-    def generate(self, system_prompt: str, user_prompt: str, *, deep: bool = False) -> str:
+    def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        deep: bool = False,
+        extended: bool = False,
+    ) -> str:
         if self._error is not None:
             raise self._error
         return self._text

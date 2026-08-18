@@ -14,6 +14,9 @@ webview_datas, webview_binaries, webview_hiddenimports = collect_all("webview")
 
 datas = [
     (str(project_root / "config"), "config"),
+    # Version source: after packaging __file__ lives under _internal, so the
+    # bundled copy of pyproject.toml keeps local_version() readable.
+    (str(project_root / "pyproject.toml"), "."),
     (str(project_root / "knowledge_base"), "knowledge_base"),
     (str(project_root / "src" / "reports" / "prompts"), "src/reports/prompts"),
     (str(project_root / "src" / "app" / "webgui" / "static"), "src/app/webgui/static"),

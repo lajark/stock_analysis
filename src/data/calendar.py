@@ -4,7 +4,6 @@
 """
 
 from datetime import datetime, timedelta
-from typing import Optional
 
 import pandas as pd
 
@@ -45,7 +44,7 @@ class TradingCalendar:
 
     def next_trading_day(
         self, date: str, exchange: str = "SSE", n: int = 1
-    ) -> Optional[str]:
+    ) -> str | None:
         """获取后续第 n 个交易日。
 
         Args:
@@ -68,7 +67,7 @@ class TradingCalendar:
 
     def prev_trading_day(
         self, date: str, exchange: str = "SSE", n: int = 1
-    ) -> Optional[str]:
+    ) -> str | None:
         """获取之前第 n 个交易日。"""
         start = datetime.strptime(date, "%Y-%m-%d") - timedelta(days=30 + n * 7)
         cal = self._get_calendar(exchange, start.strftime("%Y-%m-%d"), date)

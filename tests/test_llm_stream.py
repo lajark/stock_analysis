@@ -105,6 +105,7 @@ def _make_client(api: _ApiClient) -> LLMClient:
     client._model = "test-model"
     client._model_deep = "test-deep"
     client._max_tokens = 100
+    client._max_tokens_deep = None
     client._temperature = 0.2
     client._last_usage = None
     return client
@@ -171,6 +172,28 @@ def test_generate_stream_without_provider_usage_stays_none() -> None:
 
     assert list(client.generate_stream("sys", "user")) == ["A", "B"]
     assert client.last_usage is None
+
+
+def test_generate_stream_extended_uses_deep_token_cap() -> None:
+    stream = _Stream([_Chunk(content="ok")])
+    api = _ApiClient(_Completions(stream))
+    client = _make_client(api)
+    client._max_tokens_deep = 2000
+
+    list(client.generate_stream("sys", "user", extended=True))
+
+    assert api.chat.completions.calls[0]["max_tokens"] == 2000
+
+
+def test_generate_stream_extended_without_cap_stays_uncapped() -> None:
+    stream = _Stream([_Chunk(content="ok")])
+    api = _ApiClient(_Completions(stream))
+    client = _make_client(api)
+    client._max_tokens_deep = None
+
+    list(client.generate_stream("sys", "user", extended=True))
+
+    assert "max_tokens" not in api.chat.completions.calls[0]
 
 
 # ---------------------------------------------------------------------------
@@ -278,9 +301,18 @@ class _FakeLLM:
         }
         self.stream_calls = 0
         self.generate_calls = 0
+        self.extended_flags: list[bool] = []
 
-    def generate(self, system_prompt: str, user_prompt: str, *, deep: bool = False) -> str:
+    def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        deep: bool = False,
+        extended: bool = False,
+    ) -> str:
         self.generate_calls += 1
+        self.extended_flags.append(extended)
         return "".join(self._chunks)
 
     def generate_stream(
@@ -289,9 +321,11 @@ class _FakeLLM:
         user_prompt: str,
         *,
         deep: bool = False,
+        extended: bool = False,
         cancel_event: threading.Event | None = None,
     ):
         self.stream_calls += 1
+        self.extended_flags.append(extended)
         for index, chunk in enumerate(self._chunks):
             if cancel_event is not None and cancel_event.is_set():
                 raise LLMStreamCancelledError("LLM 流式生成已由用户取消")
@@ -386,6 +420,42 @@ def test_service_without_token_callback_uses_non_streaming_generate(
     assert fake.generate_calls == 1
     assert captured["llm_output"] == "[non-stream 报告]"
     assert result.output_kind == "report"
+
+
+def test_service_value_mode_uses_extended_token_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    _, gateway = _patch_harness(monkeypatch, tmp_path, _bundle())
+    fake = _FakeLLM(["[value 报告]"])
+    captured: dict = {}
+    _patch_render(monkeypatch, tmp_path, captured)
+
+    analyze_stock(
+        AnalysisRequest(ticker="600519", mode="value", use_llm=True),
+        llm_factory=lambda: fake,
+        gateway=gateway,
+    )
+
+    assert fake.generate_calls == 1
+    assert fake.extended_flags == [True]
+
+
+def test_service_quick_mode_uses_standard_token_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    _, gateway = _patch_harness(monkeypatch, tmp_path, _bundle())
+    fake = _FakeLLM(["[quick 报告]"])
+    captured: dict = {}
+    _patch_render(monkeypatch, tmp_path, captured)
+
+    analyze_stock(
+        AnalysisRequest(ticker="600519", mode="quick", use_llm=True),
+        llm_factory=lambda: fake,
+        gateway=gateway,
+    )
+
+    assert fake.generate_calls == 1
+    assert fake.extended_flags == [False]
 
 
 def _store_list(tmp_path):

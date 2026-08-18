@@ -33,13 +33,13 @@ def test_persist_backtest_run_stores_audit_metadata_without_curve(sample_ohlc, t
     restored = store.list()
     assert restored[0]["run_id"] == record.run_id
     assert restored[0]["request"]["audit_schema_version"] == "backtest-run-v1"
-    assert restored[0]["request"]["application_version"] == "1.3.0"
+    assert restored[0]["request"]["application_version"] == "1.4.0"
     assert restored[0]["request"]["determinism"] == "deterministic_no_random_state"
     assert restored[0]["request"]["random_seed"] is None
     details = restored[0]["stages"]["backtest"]
     assert details["data_hash"] == result.data_hash
     assert details["audit_schema_version"] == "backtest-run-v1"
-    assert details["application_version"] == "1.3.0"
+    assert details["application_version"] == "1.4.0"
     assert details["determinism"] == "deterministic_no_random_state"
     contract = details["backtest_record"]
     assert contract["run_id"] == record.run_id

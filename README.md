@@ -1,10 +1,10 @@
-# stock_analysis v1.3.0
+# stock_analysis v1.4.0
 
-`stock_analysis` is a personal A-share stock analysis tool. Local computation comes first; an LLM is used only to turn a compact analysis package into a readable report. Version 1.3.0 introduces a new web-style graphical interface with backtest/parameter optimization, a help and update tab with Markdown report preview, and fixes deep-analysis truncation and packaged caching. Tushare remains the primary data source.
+`stock_analysis` is a personal A-share stock analysis tool. Local computation comes first; an LLM is used only to turn a compact analysis package into a readable report. Version 1.4.0 adds Beijing Stock Exchange (BJ) ticker support with stricter code validation at every entry point, an extended token budget for long reports (value/deep modes), and a more reliable one-click update flow (Gitee-first download with source fallback and version detection that works in packaged builds). Tushare remains the primary data source.
 
 ## Windows users
 
-1. Download `StockAnalysis-Setup-1.3.0.exe` and run the installer.
+1. Download `StockAnalysis-Setup-1.4.0.exe` and run the installer.
 2. Launch **Stock Analysis** from the Start Menu or the desktop shortcut created by default, then open **API Settings**.
 3. Enter your Tushare Token. Add an LLM API key, endpoint, and model only if you want an AI report.
 4. Return to **Stock Analysis**, enter a ticker, choose a mode, and click **Start Analysis**. No command line is required for normal GUI use.
@@ -73,11 +73,11 @@ Source and usage notes for the strategy knowledge are documented in [knowledge_b
 ```powershell
 pip install -e ".[build]"
 powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
-python scripts\generate_release_metadata.py --version 1.3.0 --artifact installer\StockAnalysis-Setup-1.3.0.exe --pytest-summary "276 passed" --clean-windows11-smoke true
+python scripts\generate_release_metadata.py --version 1.4.0 --artifact installer\StockAnalysis-Setup-1.4.0.exe --pytest-summary "326 passed" --clean-windows11-smoke true
 python scripts\pre_push_scan.py --staged
 ```
 
-The application directory is written to `dist\StockAnalysis\`; the installer is written to `installer\StockAnalysis-Setup-1.3.0.exe`. Inno Setup 6 is required to build the installer.
+The application directory is written to `dist\StockAnalysis\`; the installer is written to `installer\StockAnalysis-Setup-1.4.0.exe`. Inno Setup 6 is required to build the installer.
 The metadata command must be run from a clean, tagged release tree; it writes `checksums.sha256` and `release-manifest.json`.
 
 ## Testing
@@ -86,7 +86,7 @@ The metadata command must be run from a clean, tagged release tree; it writes `c
 pytest tests/ -v
 ```
 
-The current suite covers settings persistence, ticker validation, knowledge retrieval, packaging configuration, release metadata, distribution scanning, and the evidence-first pipeline: 276 tests.
+The current suite covers settings persistence, ticker validation, knowledge retrieval, packaging configuration, release metadata, distribution scanning, and the evidence-first pipeline: 326 tests.
 
 ## Distribution and license
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import queue
 import re
+import sys
 import threading
 import tkinter as tk
 from collections.abc import Sequence
@@ -39,10 +40,12 @@ from src.app.service import (
     BatchItem,
     analyze_batch,
     analyze_stock,
+    validate_ticker,
 )
-from src.app.update_check import check_for_updates
+from src.app.update_check import check_for_updates, local_version
 from src.config import get_config, get_user_settings, save_user_settings
 from src.data.gateway import DataGateway
+from src.errors import StockAnalysisError
 from src.runtime_paths import user_data_root
 
 # ---------------------------------------------------------------------------
@@ -91,17 +94,6 @@ def _format_batch_summary(items: Sequence[BatchItem], *, cancelled: bool) -> str
         else:
             lines.append(f"✗ {tag} {item.request.ticker} — 未知错误")
     return "\n".join(lines)
-
-
-def _local_version() -> str:
-    """Read the project version from pyproject.toml."""
-    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
-    try:
-        text = pyproject.read_text(encoding="utf-8")
-        match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
-        return match.group(1) if match else "unknown"
-    except OSError:
-        return "unknown"
 
 
 def _render_markdown_html(text: str, *, font_size: int = 14) -> str:
@@ -196,7 +188,7 @@ class StockAnalysisApp:
             font=(BASE_FONT, 10),
             bootstyle="inverse-secondary",
         ).pack(side=tk.LEFT, padx=(14, 0))
-        version = _local_version()
+        version = local_version()
         tb.Label(
             header,
             text=f"v{version}",
@@ -554,6 +546,11 @@ class StockAnalysisApp:
         start = self.bt_start_var.get().strip()
         end = self.bt_end_var.get().strip()
         try:
+            ticker = validate_ticker(ticker)
+        except StockAnalysisError as exc:
+            messagebox.showerror("参数错误", str(exc))
+            return
+        try:
             ma_fast = int(self.bt_fast_var.get())
             ma_slow = int(self.bt_slow_var.get())
         except ValueError:
@@ -645,6 +642,11 @@ class StockAnalysisApp:
         start = self.bt_start_var.get().strip()
         end = self.bt_end_var.get().strip()
         objective = self.bt_objective_var.get()
+        try:
+            ticker = validate_ticker(ticker)
+        except StockAnalysisError as exc:
+            messagebox.showerror("参数错误", str(exc))
+            return
         try:
             fast_grid = [
                 int(x.strip())
@@ -910,7 +912,7 @@ class StockAnalysisApp:
         threading.Thread(target=self._check_update_worker, daemon=True).start()
 
     def _check_update_worker(self) -> None:
-        local, results, download_url = check_for_updates()
+        local, results, download_urls, release_page = check_for_updates()
 
         # Show result in the help tab (not a separate window)
         def _show() -> None:
@@ -921,6 +923,7 @@ class StockAnalysisApp:
                 "",
             ]
             lines.extend(f"- {line}" for line in results)
+            download_url = download_urls[0] if download_urls else release_page
             if download_url:
                 lines.append("")
                 lines.append(f"[点击前往下载页面]({download_url})")
@@ -982,7 +985,18 @@ class StockAnalysisApp:
 
     def _start_analysis(self) -> None:
         mode = self.mode_labels[self.mode_var.get()]
-        codes = _split_tickers(self.ticker_var.get())
+        try:
+            codes = [
+                validate_ticker(code)
+                for code in _split_tickers(self.ticker_var.get())
+            ]
+        except StockAnalysisError as exc:
+            messagebox.showerror("参数错误", str(exc))
+            return
+        if not codes:
+            messagebox.showerror("参数错误", "请输入股票代码")
+            return
+        logger.info("股票代码校验通过：{}", ", ".join(codes))
 
         self.analyze_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
@@ -1011,7 +1025,7 @@ class StockAnalysisApp:
             return
 
         request = AnalysisRequest(
-            ticker=codes[0] if codes else self.ticker_var.get(),
+            ticker=codes[0],
             mode=mode,
             use_llm=self.use_llm_var.get(),
             chart=self.chart_var.get(),
@@ -1219,6 +1233,11 @@ def _configure_logging() -> None:
 def main() -> None:
     """Launch the themed desktop application."""
     _configure_logging()
+    logger.info(
+        "StockAnalysis 桌面版启动 v{}（GUI 入口，{}）",
+        local_version(),
+        sys.platform,
+    )
     root = tb.Window(themename=DEFAULT_THEME)
     style = ttk.Style()
     style.configure(".", font=(BASE_FONT, 11))

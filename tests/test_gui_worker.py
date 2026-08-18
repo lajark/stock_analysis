@@ -338,12 +338,43 @@ def test_start_analysis_batch_path(monkeypatch) -> None:
     app = _make_app(ticker_var=_Var("600519,000858"))
     app._start_analysis()
     assert done.wait(2)
-    assert [r.ticker for r in captured["requests"]] == ["600519", "000858"]
+    assert [r.ticker for r in captured["requests"]] == ["600519.SH", "000858.SZ"]
     assert captured["kwargs"]["max_workers"] == 1
     assert captured["kwargs"]["cancel_event"] is app.cancel_event
     # Batch mode disables streaming: no token_callback (single-stock only).
     assert "token_callback" not in captured["kwargs"]
     assert captured["kwargs"]["item_prefix"](0, 3) == "[1/3]"
+
+
+def test_start_analysis_rejects_invalid_ticker_before_dispatch(monkeypatch) -> None:
+    """入口先校验代码，非法输入弹窗提示且不派发分析任务。"""
+    errors: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "src.app.gui.messagebox.showerror", lambda title, msg: errors.append((title, msg))
+    )
+    dispatched = {"called": False}
+    monkeypatch.setattr(
+        "src.app.gui.analyze_stock", lambda request, **kw: dispatched.update(called=True)
+    )
+    monkeypatch.setattr(
+        "src.app.gui.analyze_batch", lambda requests, **kw: dispatched.update(called=True)
+    )
+    app = _make_app(ticker_var=_Var("600519.BJ"))
+    app._start_analysis()
+    assert errors and errors[0][0] == "参数错误"
+    assert dispatched["called"] is False
+    assert app.events.empty()
+
+
+def test_start_analysis_rejects_empty_ticker_before_dispatch(monkeypatch) -> None:
+    errors: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "src.app.gui.messagebox.showerror", lambda title, msg: errors.append((title, msg))
+    )
+    app = _make_app(ticker_var=_Var("   "))
+    app._start_analysis()
+    assert errors and "请输入股票代码" in errors[0][1]
+    assert app.events.empty()
 
 
 def test_batch_worker_posts_done(monkeypatch) -> None:

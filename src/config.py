@@ -78,8 +78,9 @@ class LLMConfig(BaseSettings):
     """LLM 配置。"""
     default_mode: str = "quick"
     max_tokens: int = 6000
-    # 深度模式输出上限。``None`` 表示不限制（交给供应商默认值），用于先测
-    # 出深度分析的实际输出长度，再回填一个带余量的上限。
+    # 深度分析/价值评估等长报告模式的输出上限（EXTENDED 预算）。``None``
+    # 表示不限制（交给供应商默认值），用于先测出长报告的实际输出长度，
+    # 再回填一个带余量的上限。
     max_tokens_deep: int | None = None
     temperature: float = 0.3
 

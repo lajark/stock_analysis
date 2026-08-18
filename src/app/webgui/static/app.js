@@ -28,7 +28,7 @@ const state = {
   strategy: null,            // 当前策略（含 source/parameters/defaults）
   btParams: {},              // 回测单次参数（name -> value）
   btAdopt: null,             // 最近一次可采用的 {ma_fast, ma_slow}
-  updateUrl: null,           // 最新版安装包下载地址
+  updateUrls: [],            // 安装包候选下载地址（Gitee 优先，GitHub 兜底）
 };
 
 /* ---------------- 通用 ---------------- */
@@ -644,13 +644,18 @@ async function checkUpdate() {
     const lines = ["## 检查更新结果", `- 当前版本：**${data.local}**`, ""];
     data.results.forEach((r) => lines.push("- " + r));
     const hasNew = data.results.some((r) => r.includes("发现新版本"));
-    state.updateUrl = hasNew ? data.download_url || null : null;
-    if (hasNew && state.updateUrl) {
+    state.updateUrls = hasNew ? (data.download_urls || []) : [];
+    if (hasNew && state.updateUrls.length) {
+      const first = state.updateUrls[0];
       lines.push("");
-      lines.push(`安装包：[${decodeURIComponent(state.updateUrl.split("/").pop())}](${state.updateUrl})`);
+      lines.push(`安装包：[${decodeURIComponent(first.split("/").pop())}](${first})`);
       $("#install-update").hidden = false;
     } else {
       $("#install-update").hidden = true;
+      if (hasNew && data.release_page) {
+        lines.push("");
+        lines.push(`未发布安装包，请[前往发布页手动下载](${data.release_page})`);
+      }
     }
     $("#update-md").innerHTML = renderMarkdown(lines.join("\n"));
     $("#update-result").classList.remove("hidden");
@@ -663,12 +668,12 @@ async function checkUpdate() {
 }
 
 async function installUpdate() {
-  if (!state.updateUrl) return;
+  if (!state.updateUrls.length) return;
   if (!confirm("将下载并静默安装新版本。更新仅覆盖程序目录，您的设置/缓存/策略等用户数据不受影响。\n安装完成后请重新打开应用。继续？")) return;
   $("#install-update").disabled = true;
   $("#update-status").textContent = "正在下载安装包…（下载完成后会自动安装并退出）";
   try {
-    await api("/api/update/install", { method: "POST", body: JSON.stringify({ url: state.updateUrl }) });
+    await api("/api/update/install", { method: "POST", body: JSON.stringify({ urls: state.updateUrls }) });
   } catch (err) {
     $("#update-status").textContent = "启动更新失败：" + err.message;
     $("#install-update").disabled = false;

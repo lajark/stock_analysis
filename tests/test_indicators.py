@@ -2,20 +2,15 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from src.analysis.indicators import (
     calc_all_indicators,
     calc_bollinger,
-    calc_cci,
-    calc_ema,
     calc_kdj,
     calc_ma,
     calc_macd,
     calc_obv,
     calc_rsi,
-    calc_volume_ratio,
-    calc_williams_r,
     summarize_indicators,
 )
 

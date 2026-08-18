@@ -4,7 +4,6 @@
 """
 
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -14,7 +13,7 @@ from plotly.subplots import make_subplots
 def create_kline_chart(
     daily: pd.DataFrame,
     title: str = "",
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
 ) -> str:
     """生成 K 线图 + 技术指标（MACD/RSI/成交量）。
 
@@ -165,7 +164,7 @@ def create_comparison_chart(
     stocks_data: dict[str, pd.DataFrame],
     metric: str = "close",
     title: str = "多股票对比",
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
 ) -> str:
     """生成多股票对比图（归一化价格走势）。
 
@@ -214,7 +213,7 @@ def create_comparison_chart(
 def create_valuation_chart(
     daily: pd.DataFrame,
     title: str = "",
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
 ) -> str:
     """生成估值分位图（收盘价 + 分位区间）。"""
     df = daily.copy()

@@ -73,6 +73,7 @@ class LLMClient:
         user_prompt: str,
         *,
         deep: bool = False,
+        extended: bool = False,
     ) -> str:
         """调用 LLM 生成文本。
 
@@ -80,6 +81,7 @@ class LLMClient:
             system_prompt: 系统提示词
             user_prompt: 用户提示词（含分析数据）
             deep: 是否使用深度模型
+            extended: 是否使用长报告 Token 预算（与深度模式共享 max_tokens_deep）
 
         Returns:
             LLM 生成的文本。
@@ -89,9 +91,10 @@ class LLMClient:
         # Serialize LLM calls across worker threads (batch concurrency is
         # separate from the data-request gate; default keeps LLM serial).
         with _llm_gate():
-            # Deep mode may leave the cap unset (max_tokens_deep=None) so a
-            # trial can measure the natural output length before pinning one.
-            max_tokens = self._max_tokens_deep if deep else self._max_tokens
+            # Long-report modes (deep/value) share the extended budget; it may
+            # be unset (max_tokens_deep=None) so a trial can measure the natural
+            # output length before pinning a cap.
+            max_tokens = self._max_tokens_deep if (deep or extended) else self._max_tokens
             request: dict[str, Any] = {
                 "model": model,
                 "messages": [
@@ -119,6 +122,7 @@ class LLMClient:
         user_prompt: str,
         *,
         deep: bool = False,
+        extended: bool = False,
         cancel_event: threading.Event | None = None,
     ) -> Iterator[str]:
         """Stream LLM output chunk by chunk, interruptible on ``cancel_event``.
@@ -135,9 +139,10 @@ class LLMClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        # Deep mode may leave the cap unset (max_tokens_deep=None) so a trial
-        # can measure the natural output length before pinning one.
-        max_tokens = self._max_tokens_deep if deep else self._max_tokens
+        # Long-report modes (deep/value) share the extended budget; it may be
+        # unset (max_tokens_deep=None) so a trial can measure the natural
+        # output length before pinning a cap.
+        max_tokens = self._max_tokens_deep if (deep or extended) else self._max_tokens
         usage = None
         with _llm_gate():
             try:

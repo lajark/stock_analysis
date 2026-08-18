@@ -86,7 +86,13 @@ class AnalysisHistory:
     def stats(self) -> dict:
         """统计信息。"""
         if not self._records:
-            return {"total": 0, "by_mode": {}, "by_ticker": {}, "total_tokens": 0, "total_cost": 0.0}
+            return {
+                "total": 0,
+                "by_mode": {},
+                "by_ticker": {},
+                "total_tokens": 0,
+                "total_cost": 0.0,
+            }
 
         modes = {}
         tickers = {}

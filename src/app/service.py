@@ -47,13 +47,38 @@ class ModeInfo(TypedDict):
     model: str
     deep: bool
     kb: bool
+    extended: bool
 
 
 MODES: dict[str, ModeInfo] = {
-    "quick": {"desc": "快速扫描", "model": "deepseek-v4-flash", "deep": False, "kb": False},
-    "deep": {"desc": "深度分析", "model": "deepseek-v4-pro", "deep": True, "kb": True},
-    "value": {"desc": "价值评估", "model": "deepseek-v4-flash", "deep": False, "kb": True},
-    "trade": {"desc": "交易决策", "model": "deepseek-v4-flash", "deep": False, "kb": True},
+    "quick": {
+        "desc": "快速扫描",
+        "model": "deepseek-v4-flash",
+        "deep": False,
+        "kb": False,
+        "extended": False,
+    },
+    "deep": {
+        "desc": "深度分析",
+        "model": "deepseek-v4-pro",
+        "deep": True,
+        "kb": True,
+        "extended": True,
+    },
+    "value": {
+        "desc": "价值评估",
+        "model": "deepseek-v4-flash",
+        "deep": False,
+        "kb": True,
+        "extended": True,
+    },
+    "trade": {
+        "desc": "交易决策",
+        "model": "deepseek-v4-flash",
+        "deep": False,
+        "kb": True,
+        "extended": False,
+    },
 }
 
 
@@ -91,14 +116,31 @@ class BatchItem:
 
 
 def validate_ticker(ticker: str) -> str:
-    """Validate and normalize a mainland stock code."""
+    """Validate and normalize a mainland stock code (SH/SZ/BJ)."""
     code = ticker.strip().upper()
-    if not re.fullmatch(r"\d{6}(?:\.(?:SH|SZ))?", code):
-        raise StockAnalysisError("股票代码应为 6 位数字，例如 600519 或 000858.SZ")
-    if "." not in code:
-        exchange = "SH" if code.startswith(("5", "6", "9")) else "SZ"
-        code = f"{code}.{exchange}"
-    return code
+    match = re.fullmatch(r"(\d{6})(?:\.(SH|SZ|BJ))?", code)
+    if match is None:
+        raise StockAnalysisError(
+            "股票代码应为 6 位数字，可带 .SH/.SZ/.BJ 后缀，例如 600519 或 000858.SZ"
+        )
+    bare, explicit = match.group(1), match.group(2)
+    if explicit is not None:
+        expected = _infer_exchange(bare)
+        if explicit != expected:
+            raise StockAnalysisError(
+                f"股票代码后缀有误：{bare} 属于 {expected} 市场，应写为 {bare}.{expected}"
+            )
+        return f"{bare}.{explicit}"
+    return f"{bare}.{_infer_exchange(bare)}"
+
+
+def _infer_exchange(code: str) -> str:
+    """Infer the exchange suffix for a bare six-digit mainland code."""
+    if code.startswith(("4", "8")) or code.startswith("920"):
+        return "BJ"
+    if code.startswith(("5", "6", "9")):
+        return "SH"
+    return "SZ"
 
 
 def validate_request(request: AnalysisRequest) -> AnalysisRequest:
@@ -604,6 +646,7 @@ def _create_llm_report(
                 system_prompt,
                 user_prompt,
                 deep=bool(MODES[mode]["deep"]),
+                extended=bool(MODES[mode]["extended"]),
                 cancel_event=cancel_event,
             ):
                 token_callback(delta)
@@ -616,6 +659,7 @@ def _create_llm_report(
             system_prompt,
             user_prompt,
             deep=bool(MODES[mode]["deep"]),
+            extended=bool(MODES[mode]["extended"]),
         )
     usage = llm.last_usage or {}
     config = get_config()

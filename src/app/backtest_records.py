@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Literal
 
 from src.analysis.backtest import (
@@ -18,10 +16,10 @@ from src.analysis.backtest import (
 )
 from src.analysis.contracts import RunRecord, utc_now
 from src.app.run_records import RunRecordStore
+from src.app.update_check import local_version
 
 BACKTEST_AUDIT_SCHEMA_VERSION = "backtest-run-v1"
 BACKTEST_DETERMINISM = "deterministic_no_random_state"
-_VERSION_PATTERN = re.compile(r'(?m)^version\s*=\s*"([^"]+)"')
 
 
 @dataclass(frozen=True)
@@ -124,12 +122,7 @@ def _result_digest(value: Mapping[str, Any]) -> str:
 
 def _application_version() -> str:
     """Read the project version without requiring an installed package."""
-    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
-    try:
-        match = _VERSION_PATTERN.search(pyproject.read_text(encoding="utf-8"))
-        return match.group(1) if match else "unknown"
-    except OSError:
-        return "unknown"
+    return local_version()
 
 
 def persist_backtest_run(

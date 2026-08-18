@@ -1,6 +1,5 @@
 """价格水平分析单元测试。"""
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -31,13 +30,17 @@ class TestPriceLevels:
         result = analyze_price_levels(daily_with_indicators)
         current = result["current_price"]
         for s in result["supports"]:
-            assert s["price"] < current, f"支撑 {s['type']} 价格 {s['price']} 应低于当前价 {current}"
+            assert s["price"] < current, (
+                f"支撑 {s['type']} 价格 {s['price']} 应低于当前价 {current}"
+            )
 
     def test_resistances_above_current(self, daily_with_indicators):
         result = analyze_price_levels(daily_with_indicators)
         current = result["current_price"]
         for r in result["resistances"]:
-            assert r["price"] > current, f"阻力 {r['type']} 价格 {r['price']} 应高于当前价 {current}"
+            assert r["price"] > current, (
+                f"阻力 {r['type']} 价格 {r['price']} 应高于当前价 {current}"
+            )
 
     def test_confidence_range(self, daily_with_indicators):
         result = analyze_price_levels(daily_with_indicators)

@@ -267,7 +267,8 @@ def _estimate_targets(
     if not buy_targets:
         # 基于波动率的回撤估算
         daily_returns = np.diff(daily["close"].values) / daily["close"].values[:-1]
-        vol = float(np.std(daily_returns[-60:])) if len(daily_returns) >= 60 else float(np.std(daily_returns))
+        window = daily_returns[-60:] if len(daily_returns) >= 60 else daily_returns
+        vol = float(np.std(window))
         pullback = current * (1 - vol * 2)  # 2 倍标准差回撤
         buy_targets.append({
             "price": round(pullback, 2),
