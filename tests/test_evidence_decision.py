@@ -26,11 +26,37 @@ def test_sentiment_proxy_is_explicit_and_has_provenance() -> None:
     result = analyze_market_sentiment(_daily())
 
     assert result["status"] == "ok"
+    assert result["status_label"] == "有可用方向性证据"
     assert result["source"] == "price_volume_proxy-v1"
     assert result["as_of"] == "2025-02-11"
+    assert result["method_version"] == "market-sentiment-v2"
+    assert result["quality"]["status"] == "ok"
+    assert result["quality"]["basis"] == "proxy_only"
+    assert result["provenance"]["sources"][0]["source"] == "price_volume_proxy-v1"
     assert result["evidence"]
     assert result["evidence"][0]["independence_group"] == "price_volume_proxy"
     assert result["evidence"][0]["quality"] == 0.55
+
+
+def test_sentiment_contract_stays_complete_when_proxy_is_unavailable() -> None:
+    result = analyze_market_sentiment(_daily().head(10))
+
+    for key in (
+        "status_label",
+        "as_of",
+        "score",
+        "recent_return_pct",
+        "volume_ratio",
+        "annualized_volatility",
+        "method_version",
+        "quality",
+        "provenance",
+    ):
+        assert key in result
+    assert result["status"] == "insufficient"
+    assert result["as_of"] == "2025-01-14"
+    assert result["score"] is None
+    assert result["quality"]["status"] == "insufficient"
 
 
 def test_sentiment_adds_independent_moneyflow_evidence_without_replacing_proxy() -> None:

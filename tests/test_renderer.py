@@ -133,3 +133,41 @@ def test_price_levels_table_has_no_blank_rows_between_header_and_body(
     # 目标价列表项必须连续（无空行分割）
     assert "\n- 8 (支撑位" in report
     assert "\n- 14 (压力位" in report
+
+
+def test_renderer_displays_sentiment_proxy_and_provenance(tmp_path) -> None:
+    package = _base_package()
+    package["sentiment"] = {
+        "status": "ok",
+        "status_label": "有可用方向性证据",
+        "source": "price_volume_proxy-v1",
+        "sources": ["price_volume_proxy-v1", "tushare_moneyflow-v1"],
+        "as_of": "2026-08-14",
+        "score": 42.5,
+        "recent_return_pct": -3.2,
+        "volume_ratio": 1.35,
+        "annualized_volatility": 0.31,
+        "method_version": "market-sentiment-v2",
+        "quality": {
+            "status": "ok",
+            "status_label": "价量代理可用",
+            "basis": "proxy_plus_independent",
+            "min": 0.55,
+            "mean": 0.6,
+        },
+    }
+
+    output_path = tmp_path / "sentiment-report.md"
+    render_report(
+        package,
+        "结论",
+        "test-model",
+        {"input_tokens": 1, "output_tokens": 2},
+        str(output_path),
+    )
+
+    report = output_path.read_text(encoding="utf-8")
+    assert "## 市场行为与情绪代理" in report
+    assert "42.5" in report
+    assert "price_volume_proxy-v1、tushare_moneyflow-v1" in report
+    assert "proxy_plus_independent" in report

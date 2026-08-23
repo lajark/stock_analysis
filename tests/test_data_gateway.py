@@ -251,7 +251,8 @@ def test_gateway_uses_fresh_financial_cache() -> None:
     cached_income = pd.DataFrame({"end_date": [pd.Timestamp("2025-12-31")]})
     cache.financials["income"] = cached_income
     cache.meta["financials/600519.SH/income"] = {
-        "updated_at": "2026-08-13T10:00:00",
+        # Keep the fixture inside the seven-day TTL regardless of when CI runs.
+        "updated_at": (datetime.now() - timedelta(days=1)).isoformat(),
     }
     gateway = DataGateway(primary=primary, fallback=None, cache=cache)
 

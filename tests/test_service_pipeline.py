@@ -16,6 +16,7 @@ from src.app.run_records import RunRecordStore
 from src.app.service import AnalysisRequest, _safe_error_message, analyze_stock
 from src.data.gateway import StockDataBundle
 from src.errors import DataValidationError, StockAnalysisError
+from src.reports.context_router import CONTEXT_ROUTER_VERSION
 
 
 class FakeGateway:
@@ -168,7 +169,7 @@ def test_service_records_context_router_metadata_for_llm(monkeypatch, tmp_path) 
     assert result.output_kind == "report"
     record = store.list()[0]
     stage = record["stages"]["generate_report"]
-    assert stage["context_router_version"] == "context-router-v1"
+    assert stage["context_router_version"] == CONTEXT_ROUTER_VERSION
     expected_ids = [fragment["id"] for fragment in captured["context"]["fragments"]]
     assert stage["context_fragment_ids"] == expected_ids
     assert stage["context_hash"] == captured["context"]["content_hash"]

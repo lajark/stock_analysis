@@ -112,16 +112,43 @@ def _moneyflow_evidence(
     """Build independent market-behavior evidence without inventing a score."""
     source = "tushare_moneyflow-v1"
     if moneyflow is None or moneyflow.empty or "trade_date" not in moneyflow.columns:
-        return [], {"status": "insufficient", "source": source}
+        return [], {
+            "status": "insufficient",
+            "source": source,
+            "sources": [source],
+            "source_count": 0,
+            "as_of": "",
+            "quality": None,
+            "coverage_start": "",
+            "coverage_end": "",
+        }
     frame = moneyflow.copy()
     frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce")
     amount_column = "net_mf_amount" if "net_mf_amount" in frame.columns else "net_mf_vol"
     if amount_column not in frame.columns:
-        return [], {"status": "insufficient", "source": source}
+        return [], {
+            "status": "insufficient",
+            "source": source,
+            "sources": [source],
+            "source_count": 0,
+            "as_of": "",
+            "quality": None,
+            "coverage_start": "",
+            "coverage_end": "",
+        }
     frame[amount_column] = pd.to_numeric(frame[amount_column], errors="coerce")
     frame = frame.dropna(subset=["trade_date", amount_column]).sort_values("trade_date")
     if frame.empty:
-        return [], {"status": "insufficient", "source": source}
+        return [], {
+            "status": "insufficient",
+            "source": source,
+            "sources": [source],
+            "source_count": 0,
+            "as_of": "",
+            "quality": None,
+            "coverage_start": "",
+            "coverage_end": "",
+        }
     recent = frame.tail(5)
     net_flow = float(recent[amount_column].sum())
     as_of = recent["trade_date"].iloc[-1].strftime("%Y-%m-%d")
@@ -149,9 +176,14 @@ def _moneyflow_evidence(
     return [evidence], {
         "status": "ok",
         "source": source,
+        "sources": [source],
+        "source_count": 1,
         "as_of": as_of,
+        "coverage_start": recent["trade_date"].iloc[0].strftime("%Y-%m-%d"),
+        "coverage_end": as_of,
         "net_flow_5d": round(net_flow, 4),
         "unit": "provider_raw",
+        "quality": 0.65,
     }
 
 
@@ -304,6 +336,162 @@ def normalize_external_evidence(
     }
 
 
+def _build_sentiment_result(
+    *,
+    source: str,
+    analysis_cutoff: str | None,
+    proxy_available: bool,
+    as_of: str | None,
+    score: float | None,
+    recent_return_pct: float | None,
+    volume_ratio: float | None,
+    annualized_volatility: float | None,
+    flow_evidence: list[dict[str, Any]],
+    flow_summary: dict[str, Any],
+    external_rows: list[dict[str, Any]],
+    external_summary: dict[str, Any],
+    official_rows: list[dict[str, Any]],
+    official_summary: dict[str, Any],
+    proxy_evidence: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Assemble the stable, report-facing sentiment contract.
+
+    The legacy fields remain intact for callers and stored JSON.  The added
+    quality/provenance blocks give the report layer one consistent shape even
+    when the price-volume proxy or an independent source is unavailable.
+    """
+    all_evidence = proxy_evidence + flow_evidence + external_rows + official_rows
+    independent_summaries = (
+        ("moneyflow", flow_summary),
+        ("external", external_summary),
+        ("official_event", official_summary),
+    )
+    independent_sources: list[str] = []
+    source_details: list[dict[str, Any]] = [
+        {
+            "source": source,
+            "kind": "price_volume_proxy",
+            "role": "primary",
+            "status": "ok" if proxy_available else "insufficient",
+            "as_of": as_of or analysis_cutoff or "",
+            "quality": 0.55 if proxy_available else None,
+            "independence_group": "price_volume_proxy",
+        }
+    ]
+    for kind, summary in independent_summaries:
+        if summary.get("status") != "ok":
+            continue
+        summary_sources = summary.get("sources") or [summary.get("source", "")]
+        for summary_source in summary_sources:
+            normalized_source = str(summary_source).strip()
+            if not normalized_source or normalized_source in independent_sources:
+                continue
+            independent_sources.append(normalized_source)
+            source_details.append(
+                {
+                    "source": normalized_source,
+                    "kind": kind,
+                    "role": "independent",
+                    "status": "ok",
+                    "as_of": str(summary.get("as_of") or ""),
+                    "quality": summary.get("quality", summary.get("quality_min")),
+                    "independence_group": kind,
+                }
+            )
+
+    evidence_dates = [
+        str(item.get("as_of"))
+        for item in all_evidence
+        if item.get("as_of")
+    ]
+    effective_as_of = as_of or analysis_cutoff or max(evidence_dates, default="")
+    source_dates = [
+        str(item.get("as_of"))
+        for item in source_details
+        if item.get("as_of")
+    ]
+    coverage_start = min(source_dates, default="")
+    coverage_end = max(source_dates, default="")
+    quality_values = [
+        float(item["quality"])
+        for item in all_evidence
+        if _as_float(item.get("quality")) is not None
+    ]
+    if proxy_available and not quality_values:
+        quality_values.append(0.55)
+    quality_status = (
+        "ok"
+        if proxy_available
+        else "partial"
+        if all_evidence
+        else "insufficient"
+    )
+    quality_labels = {
+        "ok": "价量代理可用",
+        "partial": "仅独立来源可用",
+        "insufficient": "证据不足",
+    }
+    basis = (
+        "proxy_plus_independent"
+        if proxy_available and independent_sources
+        else "proxy_only"
+        if proxy_available
+        else "independent_only"
+        if independent_sources
+        else "none"
+    )
+    status = (
+        "ok"
+        if proxy_available and all_evidence
+        else "neutral"
+        if proxy_available
+        else "ok"
+        if all_evidence
+        else "insufficient"
+    )
+    status_labels = {
+        "ok": "有可用方向性证据",
+        "neutral": "中性观察",
+        "insufficient": "数据不足",
+    }
+    sources = [source] + independent_sources
+    return {
+        "status": status,
+        "status_label": status_labels[status],
+        "source": source,
+        "sources": sources,
+        "independent_source": independent_sources[0] if independent_sources else None,
+        "as_of": effective_as_of,
+        "score": score,
+        "recent_return_pct": recent_return_pct,
+        "volume_ratio": volume_ratio,
+        "annualized_volatility": annualized_volatility,
+        "method_version": "market-sentiment-v2",
+        "quality": {
+            "status": quality_status,
+            "status_label": quality_labels[quality_status],
+            "basis": basis,
+            "evidence_count": len(all_evidence),
+            "source_count": len(source_details),
+            "min": round(min(quality_values), 4) if quality_values else None,
+            "mean": round(float(np.mean(quality_values)), 4)
+            if quality_values
+            else None,
+        },
+        "provenance": {
+            "method_version": "market-sentiment-v2",
+            "as_of": effective_as_of,
+            "coverage_start": coverage_start,
+            "coverage_end": coverage_end,
+            "sources": source_details,
+        },
+        "moneyflow": flow_summary,
+        "external": external_summary,
+        "official_events": official_summary,
+        "evidence": all_evidence,
+    }
+
+
 def analyze_market_sentiment(
     daily: pd.DataFrame,
     moneyflow: pd.DataFrame | None = None,
@@ -331,48 +519,48 @@ def analyze_market_sentiment(
         as_of=analysis_cutoff,
     )
     flow_evidence, flow_summary = _moneyflow_evidence(moneyflow)
-    independent_sources = (
-        ([flow_summary["source"]] if flow_evidence else [])
-        + list(external_summary["sources"])
-        + list(official_summary["sources"])
-    )
-    independent_source = independent_sources[0] if independent_sources else None
     required = {"trade_date", "close", "volume"}
     if daily.empty or not required.issubset(daily.columns):
-        return {
-            "status": (
-                "ok"
-                if flow_evidence or external_rows or official_rows
-                else "insufficient"
-            ),
-            "source": source,
-            "sources": [source] + independent_sources,
-            "independent_source": independent_source,
-            "evidence": flow_evidence + external_rows + official_rows,
-            "moneyflow": flow_summary,
-            "external": external_summary,
-            "official_events": official_summary,
-        }
+        return _build_sentiment_result(
+            source=source,
+            analysis_cutoff=analysis_cutoff,
+            proxy_available=False,
+            as_of=None,
+            score=None,
+            recent_return_pct=None,
+            volume_ratio=None,
+            annualized_volatility=None,
+            flow_evidence=flow_evidence,
+            flow_summary=flow_summary,
+            external_rows=external_rows,
+            external_summary=external_summary,
+            official_rows=official_rows,
+            official_summary=official_summary,
+            proxy_evidence=[],
+        )
     frame = daily.copy()
     frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce")
     frame["close"] = pd.to_numeric(frame["close"], errors="coerce")
     frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce")
     frame = frame.dropna(subset=["trade_date", "close", "volume"]).sort_values("trade_date")
     if len(frame) < 20:
-        return {
-            "status": (
-                "ok"
-                if flow_evidence or external_rows or official_rows
-                else "insufficient"
-            ),
-            "source": source,
-            "sources": [source] + independent_sources,
-            "independent_source": independent_source,
-            "evidence": flow_evidence + external_rows + official_rows,
-            "moneyflow": flow_summary,
-            "external": external_summary,
-            "official_events": official_summary,
-        }
+        return _build_sentiment_result(
+            source=source,
+            analysis_cutoff=analysis_cutoff,
+            proxy_available=False,
+            as_of=None,
+            score=None,
+            recent_return_pct=None,
+            volume_ratio=None,
+            annualized_volatility=None,
+            flow_evidence=flow_evidence,
+            flow_summary=flow_summary,
+            external_rows=external_rows,
+            external_summary=external_summary,
+            official_rows=official_rows,
+            official_summary=official_summary,
+            proxy_evidence=[],
+        )
 
     recent_return = float(frame["close"].iloc[-1] / frame["close"].iloc[-20] - 1.0)
     volume_base = float(frame["volume"].iloc[-20:].mean())
@@ -432,28 +620,23 @@ def analyze_market_sentiment(
                 independence_group="price_volume_proxy",
             )
         )
-    all_evidence = (
-        [item.to_dict() for item in evidence]
-        + flow_evidence
-        + external_rows
-        + official_rows
+    return _build_sentiment_result(
+        source=source,
+        analysis_cutoff=analysis_cutoff,
+        proxy_available=True,
+        as_of=as_of,
+        score=round(score, 1),
+        recent_return_pct=round(recent_return * 100, 2),
+        volume_ratio=round(volume_ratio, 2) if volume_ratio is not None else None,
+        annualized_volatility=round(volatility, 4) if volatility is not None else None,
+        flow_evidence=flow_evidence,
+        flow_summary=flow_summary,
+        external_rows=external_rows,
+        external_summary=external_summary,
+        official_rows=official_rows,
+        official_summary=official_summary,
+        proxy_evidence=[item.to_dict() for item in evidence],
     )
-    sources = [source] + independent_sources
-    return {
-        "status": "ok" if all_evidence else "neutral",
-        "source": source,
-        "sources": sources,
-        "independent_source": independent_source,
-        "as_of": as_of,
-        "score": round(score, 1),
-        "recent_return_pct": round(recent_return * 100, 2),
-        "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
-        "annualized_volatility": round(volatility, 4) if volatility is not None else None,
-        "moneyflow": flow_summary,
-        "external": external_summary,
-        "official_events": official_summary,
-        "evidence": all_evidence,
-    }
 
 
 def _analysis_evidence(

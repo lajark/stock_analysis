@@ -92,3 +92,19 @@ def test_quick_mode_without_signals_does_not_inject_context() -> None:
     assert result["fragments"] == []
     assert result["prompt_text"] == ""
     assert result["char_count"] == 0
+
+
+def test_sentiment_signal_routes_sentiment_knowledge() -> None:
+    result = route_context(
+        "quick",
+        {
+            "sentiment": {
+                "status": "ok",
+                "score": 42.5,
+                "evidence": [],
+            }
+        },
+    )
+
+    assert result["dimensions"] == ["sentiment"]
+    assert result["fragments"][0]["dimension"] == "sentiment"

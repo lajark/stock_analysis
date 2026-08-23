@@ -36,7 +36,8 @@ try {
         "tests/test_cache_corrupt.py",
         "tests/test_provider_contracts.py",
         "tests/test_concurrency.py",
-        "tests/test_app_cancel.py"
+        "tests/test_app_cancel.py",
+        "tests/test_report_prompts.py"
     )
     # Only source is type-checked (test doubles need not pass mypy);
     # matches the yml Mypy step.

@@ -29,6 +29,24 @@ REPORT_TEMPLATE = """# {{ stock_name }} ({{ stock_code }}) 股票分析报告
 | 基本面评分 | {{ fundamental.score }} | {{ fundamental.score_label }} |
 | 风险等级 | {{ risk.risk_level.label }} | 评分 {{ risk.risk_level.score }} |
 
+{% if sentiment %}
+## 市场行为与情绪代理
+
+> 本节为个股价量/资金流/官方事件证据汇总，不等同于新闻、调查或全市场情绪指数；缺失项不会由模型补造。
+
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 代理状态 | {{ sentiment_view.status }} | {{ sentiment_view.raw_status }} |
+| 价量代理分数 | {{ sentiment_view.score }} | 0-100，{{ sentiment_view.source }} |
+| 近20个交易日价格变化 | {{ sentiment_view.recent_return }} | 个股价量代理 |
+| 最新成交量 / 20日均量 | {{ sentiment_view.volume_ratio }} | 活跃度代理 |
+| 年化波动率 | {{ sentiment_view.volatility }} | 近20日收益波动年化 |
+| 证据质量 | {{ sentiment_view.quality_status }} | {{ sentiment_view.quality_range }} |
+| 数据截止 | {{ sentiment_view.as_of }} | 方法版本 {{ sentiment_view.method_version }} |
+| 来源 | {{ sentiment_view.sources }} | {{ sentiment_view.quality_basis }} |
+
+{% endif %}
+
 {% if price_levels %}
 ## 关键价位
 
@@ -131,6 +149,40 @@ def _truncate(value: Any, limit: int) -> str:
     return text[:limit] + "…"
 
 
+def _sentiment_report_context(value: Any) -> dict[str, Any]:
+    """Return short, stable display fields for the sentiment report table."""
+    if not isinstance(value, dict):
+        return {"available": False}
+    quality = value.get("quality")
+    quality = quality if isinstance(quality, dict) else {}
+
+    def display(item: Any, suffix: str = "") -> str:
+        return f"{item}{suffix}" if item is not None else "不可用"
+
+    minimum = display(quality.get("min"))
+    mean = display(quality.get("mean"))
+    sources = value.get("sources")
+    source_text = "、".join(str(item) for item in sources) if sources else "不可用"
+    return {
+        "available": True,
+        "status": str(value.get("status_label") or value.get("status") or "不可用"),
+        "raw_status": str(value.get("status") or "不可用"),
+        "score": display(value.get("score")),
+        "recent_return": display(value.get("recent_return_pct"), "%"),
+        "volume_ratio": display(value.get("volume_ratio"), " 倍"),
+        "volatility": display(value.get("annualized_volatility")),
+        "source": str(value.get("source") or "不可用"),
+        "as_of": str(value.get("as_of") or "不可用"),
+        "method_version": str(value.get("method_version") or "不可用"),
+        "quality_status": str(
+            quality.get("status_label") or quality.get("status") or "不可用"
+        ),
+        "quality_range": f"最低 {minimum} / 平均 {mean}",
+        "quality_basis": str(quality.get("basis") or "不可用"),
+        "sources": source_text,
+    }
+
+
 def render_report(
     package: dict[str, Any],
     llm_output: str,
@@ -162,6 +214,8 @@ def render_report(
     # Truncate oversized change values so the change table stays readable
     # (e.g. whole evidence lists that differ only in a few fields).
     changes = _shorten_change_values(package.get("changes"))
+    sentiment = package.get("sentiment", {})
+    sentiment_view = _sentiment_report_context(sentiment)
 
     # 判断是否使用了策略建议参数覆盖
     ma_override_note = ""
@@ -183,6 +237,8 @@ def render_report(
         fundamental=package["fundamental"],
         valuation=package["valuation"],
         risk=package["risk"],
+        sentiment=sentiment if sentiment_view.get("available") else {},
+        sentiment_view=sentiment_view,
         price_levels=package.get("price_levels", {}),
         changes=changes,
         meta=meta,

@@ -8,7 +8,7 @@ from typing import Any
 
 from src.reports.knowledge_retriever import retrieve_fragments
 
-CONTEXT_ROUTER_VERSION = "context-router-v1"
+CONTEXT_ROUTER_VERSION = "context-router-v2"
 DEFAULT_MAX_CHARS = 5000
 DEFAULT_MAX_FRAGMENTS = 8
 
@@ -74,6 +74,7 @@ def select_dimensions(mode: str, package: Mapping[str, Any]) -> list[str]:
     valuation = _mapping(package.get("valuation"))
     risk = _mapping(package.get("risk"))
     price_levels = _mapping(package.get("price_levels"))
+    sentiment = _mapping(package.get("sentiment"))
     quality = str(package.get("quality") or "ok")
     data_gaps = package.get("data_gaps")
 
@@ -94,6 +95,16 @@ def select_dimensions(mode: str, package: Mapping[str, Any]) -> list[str]:
 
     if price_levels.get("supports") or price_levels.get("resistances"):
         _append_unique(dimensions, "support_resistance")
+
+    # Route the dedicated sentiment knowledge only when the package carries a
+    # usable proxy metric or auditable evidence.  Empty/legacy packages keep
+    # the previous low-token behavior.
+    sentiment_signal = bool(sentiment.get("evidence")) or any(
+        sentiment.get(key) is not None
+        for key in ("score", "recent_return_pct", "volume_ratio")
+    )
+    if sentiment_signal:
+        _append_unique(dimensions, "sentiment")
     confidence = _mapping(price_levels.get("confidence"))
     buy_confidence = confidence.get("buy_confidence")
     sell_confidence = confidence.get("sell_confidence")
