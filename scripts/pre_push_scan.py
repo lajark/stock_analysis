@@ -25,6 +25,9 @@ SECRET_PATTERNS = (
     ),
     re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9])"),
 )
+PUBLIC_RAW_SUFFIXES = (".pdf", ".zip", ".tar", ".tar.gz", ".parquet")
+PUBLIC_DATA_ROOTS = ("docs/", "benchmarks/")
+PUBLIC_CSV_MAX_BYTES = 5 * 1024 * 1024
 
 
 def candidate_paths(repo: Path, *, staged: bool = False) -> list[Path]:
@@ -50,6 +53,19 @@ def scan_paths(repo: Path, paths: list[Path]) -> list[str]:
         if filename in SECRET_FILENAMES or filename.endswith((".pem", ".key", ".p12", ".pfx")):
             issues.append(f"secret-like filename: {normalized}")
             continue
+
+        if normalized.startswith(PUBLIC_DATA_ROOTS):
+            suffix = normalized.lower()
+            if suffix.endswith(PUBLIC_RAW_SUFFIXES):
+                issues.append(f"forbidden public asset: {normalized}")
+                continue
+            if suffix.endswith(".csv"):
+                try:
+                    if (repo / relative).stat().st_size > PUBLIC_CSV_MAX_BYTES:
+                        issues.append(f"oversized public data: {normalized}")
+                        continue
+                except OSError:
+                    continue
 
         path = repo / relative
         if not path.is_file():

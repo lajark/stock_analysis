@@ -72,6 +72,8 @@ ci_policy_job: "ci-lint-test-build-smoke"
 - `knowledge_base/` 下的 Markdown 知识库：项目作者已确认内容为项目自有或作者自有文档的
   结构化派生内容，来源和许可记录见 `knowledge_base/README.md`。
 - `README.md`、`README_EN.md`、`常用命令.txt`：公开用户文档。
+- `README.zh-CN.md`、`docs/`：公开方法说明、界面预览和脱敏示例；不得放入本机路径、用户运行记录或未确认来源资料。
+- `benchmarks/`：公开 benchmark 清单、来源 URL、公告 ID、哈希、规则和小型项目自有夹具；原始 PDF、完整行情、供应商导出和大体量 CSV 保持 `LOCAL-ONLY`。
 - `LICENSE`、`THIRD_PARTY_NOTICES.md`、未来的 `CHANGELOG.md`。
 - `.env.example`：只能包含字段名、公开接口地址、模型示例和明显的假值。
 - `.gitignore`、`pyproject.toml`、构建/Lint/类型检查配置。
@@ -95,6 +97,7 @@ ci_policy_job: "ci-lint-test-build-smoke"
 - `../release/stock_analysis/` 旧发布副本及其 `.git/`。
 - `build/`、`dist/`、`installer/`、`*.egg-info/`、测试缓存和覆盖率输出。
 - `data/cache/`、`output/`、`logs/`、DuckDB/SQLite/Parquet 文件。
+- benchmark 的原始 PDF、ZIP、完整行情、供应商导出、benchmark 运行结果和用户分析包。
 - 用户分析历史、报告、图表、股票组合和成本统计。
 - `.venv/`、IDE 设置、本机脚本和 `*.local.*` 配置。
 - 原始 PDF、原始数据集、一次性导出包和未确认版权的参考资料。

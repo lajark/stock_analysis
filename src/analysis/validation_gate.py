@@ -230,6 +230,13 @@ def validate_analysis_inputs(
                 announcement_dates = announcement_dates.fillna(
                     pd.to_datetime(frame[column], errors="coerce")
                 )
+            if announcement_dates.isna().any():
+                add_check(
+                    f"financial.{dataset}.announcement_metadata",
+                    "warn",
+                    f"{dataset} 存在缺少公告日期的记录，PIT 保证降级",
+                    (dataset, "financial_announcement_metadata"),
+                )
             future_announcements = announcement_dates > requested
             if future_announcements.any():
                 add_check(
@@ -238,6 +245,13 @@ def validate_analysis_inputs(
                     f"{dataset} 含请求日期之后才公告的记录，疑似未来信息泄漏",
                     (dataset, "financial_announcement"),
                 )
+        else:
+            add_check(
+                f"financial.{dataset}.announcement_metadata",
+                "warn",
+                f"{dataset} 缺少公告日期字段，PIT 保证降级",
+                (dataset, "financial_announcement_metadata"),
+            )
 
     if blocking_reasons:
         gate_status: Literal["pass", "degraded", "block"] = "block"

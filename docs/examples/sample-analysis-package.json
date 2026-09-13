@@ -1,0 +1,77 @@
+{
+  "schema_version": "evidence-package-v1",
+  "run_id": "example-600519-20260814",
+  "meta": {
+    "analysis_date": "2026-08-14",
+    "generated_at": "2026-08-14T12:00:00+08:00",
+    "data_provider": "tushare",
+    "data_date": "2026-08-14"
+  },
+  "stock": {
+    "name": "贵州茅台",
+    "code": "600519.SH",
+    "industry": "白酒",
+    "market": "上交所主板"
+  },
+  "technical": {
+    "close": 1458.0,
+    "trend": "震荡偏强",
+    "macd_status": "零轴上方整理",
+    "macd": 3.4,
+    "rsi": 54.2,
+    "rsi_status": "中性",
+    "kdj_k": 58.1,
+    "kdj_d": 55.6,
+    "kdj_j": 63.1,
+    "kdj_status": "中性偏强"
+  },
+  "valuation": {
+    "percentiles": {
+      "price_percentile_1y": 48.0,
+      "level": "中等"
+    }
+  },
+  "fundamental": {
+    "score": 78,
+    "score_label": "较好"
+  },
+  "risk": {
+    "risk_level": {
+      "label": "中等",
+      "score": 42
+    }
+  },
+  "sentiment": {
+    "status": "ok",
+    "status_label": "有可用方向性证据",
+    "source": "price_volume_proxy-v1",
+    "sources": ["price_volume_proxy-v1", "tushare_moneyflow-v1"],
+    "as_of": "2026-08-14",
+    "score": 57.0,
+    "recent_return_pct": 2.1,
+    "volume_ratio": 1.08,
+    "annualized_volatility": 0.22,
+    "method_version": "market-sentiment-v2",
+    "quality": {
+      "status": "ok",
+      "status_label": "价量代理可用",
+      "basis": "proxy_plus_independent",
+      "min": 0.55,
+      "mean": 0.61
+    }
+  },
+  "price_levels": {},
+  "changes": {
+    "changed_count": 0,
+    "changes": []
+  },
+  "validation": {
+    "status": "pass",
+    "allow_llm": true,
+    "confidence_cap": 80,
+    "warnings": []
+  },
+  "snapshot_ref": {
+    "descriptor_hash": "example-only-no-user-data"
+  }
+}

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Stock Analysis Web GUI preview</title>
+  <desc id="desc">A sanitized static preview of the local-first stock analysis Web GUI.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f6f8fb"/>
+      <stop offset="1" stop-color="#e6edf5"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#14b8a6"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#0f172a" flood-opacity=".16"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect x="34" y="28" width="1212" height="664" rx="28" fill="#ffffff" fill-opacity=".88" filter="url(#shadow)"/>
+  <rect x="34" y="28" width="1212" height="84" rx="28" fill="#111827"/>
+  <rect x="34" y="84" width="1212" height="28" fill="#111827"/>
+  <circle cx="76" cy="70" r="10" fill="#60a5fa"/>
+  <text x="100" y="67" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="24" font-weight="700" fill="#f8fafc">股票分析工具</text>
+  <text x="100" y="91" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#cbd5e1">本地分析 · 手动触发 · AI 报告可选</text>
+  <text x="1090" y="73" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="14" fill="#cbd5e1">v1.4.1</text>
+  <rect x="64" y="136" width="1152" height="50" rx="14" fill="#eef2ff"/>
+  <rect x="78" y="146" width="98" height="30" rx="10" fill="#ffffff"/>
+  <text x="105" y="167" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="14" font-weight="700" fill="#1d4ed8">分析</text>
+  <text x="222" y="167" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="14" fill="#64748b">回测/优化</text>
+  <text x="362" y="167" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="14" fill="#64748b">设置</text>
+  <text x="465" y="167" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="14" fill="#64748b">帮助</text>
+  <rect x="64" y="210" width="424" height="430" rx="20" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="92" y="250" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="18" font-weight="700" fill="#0f172a">分析参数</text>
+  <text x="92" y="289" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#64748b">股票代码</text>
+  <rect x="92" y="301" width="368" height="42" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="112" y="328" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="15" fill="#0f172a">600519.SH</text>
+  <text x="92" y="372" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#64748b">分析模式</text>
+  <rect x="92" y="384" width="368" height="42" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="112" y="411" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="15" fill="#0f172a">快速扫描</text>
+  <rect x="92" y="460" width="154" height="42" rx="12" fill="url(#accent)"/>
+  <text x="130" y="487" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="15" font-weight="700" fill="#ffffff">开始分析</text>
+  <rect x="258" y="460" width="128" height="42" rx="12" fill="#f1f5f9" stroke="#cbd5e1"/>
+  <text x="284" y="487" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="14" fill="#334155">无 LLM 模式</text>
+  <text x="92" y="558" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#64748b">数据源</text>
+  <text x="92" y="585" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="14" fill="#0f766e">Tushare → AkShare（受控降级）</text>
+  <text x="92" y="612" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="12" fill="#94a3b8">本地缓存 · PIT 校验 · 复权口径记录</text>
+  <rect x="518" y="210" width="698" height="430" rx="20" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="550" y="250" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="18" font-weight="700" fill="#0f172a">结果预览</text>
+  <rect x="550" y="274" width="634" height="92" rx="14" fill="#eff6ff"/>
+  <text x="574" y="307" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="20" font-weight="700" fill="#1e3a8a">贵州茅台（600519.SH）</text>
+  <text x="574" y="337" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#475569">结构化事实先计算 · LLM 仅负责叙述</text>
+  <rect x="550" y="392" width="200" height="90" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="574" y="422" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#64748b">PIT 状态</text>
+  <text x="574" y="455" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="22" font-weight="700" fill="#0f766e">可用 / 可追溯</text>
+  <rect x="768" y="392" width="200" height="90" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="792" y="422" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#64748b">数据截至</text>
+  <text x="792" y="455" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="22" font-weight="700" fill="#0f172a">2026-08-14</text>
+  <rect x="986" y="392" width="198" height="90" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="1010" y="422" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#64748b">报告模式</text>
+  <text x="1010" y="455" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="22" font-weight="700" fill="#0f172a">quick</text>
+  <rect x="550" y="514" width="634" height="86" rx="14" fill="#111827"/>
+  <text x="574" y="548" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#94a3b8">透明度提示</text>
+  <text x="574" y="576" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="15" fill="#f8fafc">没有公告日元数据时，结论会降级，不会伪装成完整 PIT。</text>
+</svg>

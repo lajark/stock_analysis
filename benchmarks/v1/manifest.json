@@ -1,0 +1,111 @@
+{
+  "schema_version": "stock-analysis-benchmark/v1",
+  "as_of": "2026-08-15",
+  "parser_version": "cninfo-pdf-financials-v28",
+  "prepared": {
+    "snapshot_dir": "prepared/official-financials-v28",
+    "index": "prepared/official-disclosure-checklist-pit-20260815.csv"
+  },
+  "financial_cases": [
+    {
+      "ts_code": "600519.SH",
+      "name": "贵州茅台",
+      "periods": ["2024-12-31", "2025-06-30"],
+      "expected": {"revision": "original", "announcement_match": "exact", "status": "provided"},
+      "documents": [
+        {"period_end": "2024-12-31", "path": "raw_reports/600519.SH_2024-12-31_annual_original.pdf", "announce_date": "2025-04-02", "announcement_id": "1222993920", "source_url": "https://static.cninfo.com.cn/finalpage/2025-04-03/1222993920.PDF", "sha256": "5299f4940e2ce4e91084b73dc457d558b9d335fa76fbfee6227e4254eb7f4a30"},
+        {"period_end": "2025-06-30", "path": "raw_reports/600519.SH_2025-06-30_semiannual_original.pdf", "announce_date": "2025-08-12", "announcement_id": "1224462930", "source_url": "https://static.cninfo.com.cn/finalpage/2025-08-13/1224462930.PDF", "sha256": "c80fb7180169469053c396e65315414368bcfa9f1f1d4e3bf793c8fb327e6b0c"}
+      ]
+    },
+    {
+      "ts_code": "600036.SH",
+      "name": "招商银行",
+      "periods": ["2024-12-31", "2025-06-30"],
+      "expected": {"revision": "original", "announcement_match": "exact", "status": "provided"},
+      "documents": [
+        {"period_end": "2024-12-31", "path": "raw_reports/600036.SH_2024-12-31_annual_original.pdf", "announce_date": "2025-03-25", "announcement_id": "1222895154", "source_url": "https://static.cninfo.com.cn/finalpage/2025-03-26/1222895154.PDF", "sha256": "44a8759c94e1ba92f1d96897ca3778592d9a7eb33b53420c19268f0b140d81c3"},
+        {"period_end": "2025-06-30", "path": "raw_reports/600036.SH_2025-06-30_semiannual_original.pdf", "announce_date": "2025-08-29", "announcement_id": "1224624358", "source_url": "https://static.cninfo.com.cn/finalpage/2025-08-30/1224624358.PDF", "sha256": "a6565daecb14061b2a29a92e4a7d0a188cd143cd31fa7c14cf6d168db768c9c4"}
+      ]
+    },
+    {
+      "ts_code": "600019.SH",
+      "name": "宝钢股份",
+      "periods": ["2024-12-31", "2025-06-30"],
+      "expected": {"revision": "original", "announcement_match": "exact", "status": "provided"},
+      "documents": [
+        {"period_end": "2024-12-31", "path": "raw_reports/600019.SH_2024-12-31_annual_original.pdf", "announce_date": "2025-04-25", "announcement_id": "1223329102", "source_url": "https://static.cninfo.com.cn/finalpage/2025-04-26/1223329102.PDF", "sha256": "0f607360d5977d9ede8ade0fc4c9de176545b04c30ec269059dd7754b4ebebaa"},
+        {"period_end": "2025-06-30", "path": "raw_reports/600019.SH_2025-06-30_semiannual_original.pdf", "announce_date": "2025-08-27", "announcement_id": "1224588087", "source_url": "https://static.cninfo.com.cn/finalpage/2025-08-28/1224588087.PDF", "sha256": "b2296b005c8c9da4db1f29174bb5c58cbbfb75e6c9bd725f0e8c0cafbfd05dfe"}
+      ]
+    },
+    {
+      "ts_code": "300750.SZ",
+      "name": "宁德时代",
+      "periods": ["2024-12-31", "2025-06-30"],
+      "expected": {"revision": "original", "announcement_match": "exact", "status": "provided"},
+      "documents": [
+        {"period_end": "2024-12-31", "path": "raw_reports/300750.SZ_2024-12-31_annual_original.pdf", "announce_date": "2025-03-14", "announcement_id": "1222806982", "source_url": "https://static.cninfo.com.cn/finalpage/2025-03-15/1222806982.PDF", "sha256": "b4f1713d7b821eb076c102711d177fe942ccc2bc8dd171ae5d7a95799a65b0ad"},
+        {"period_end": "2025-06-30", "path": "raw_reports/300750.SZ_2025-06-30_semiannual_original.pdf", "announce_date": "2025-07-30", "announcement_id": "1224342874", "source_url": "https://static.cninfo.com.cn/finalpage/2025-07-31/1224342874.PDF", "sha256": "94da19aaaf50205fa69d8afa9598262e1c785159c34c42f459bd1104fa14c46f"}
+      ]
+    },
+    {
+      "ts_code": "600221.SH",
+      "name": "海航控股",
+      "periods": ["2024-12-31", "2025-06-30"],
+      "expected": {"revision": "original", "announcement_match": "exact", "status": "provided"},
+      "documents": [
+        {"period_end": "2024-12-31", "path": "raw_reports/600221.SH_2024-12-31_annual_original.pdf", "announce_date": "2025-04-29", "announcement_id": "1223419508", "source_url": "https://static.cninfo.com.cn/finalpage/2025-04-30/1223419508.PDF", "sha256": "40f12c3a42d7fa7c4cb74e58b4f244de8728c89052ecfc166e6a7c08452da074"},
+        {"period_end": "2025-06-30", "path": "raw_reports/600221.SH_2025-06-30_semiannual_original.pdf", "announce_date": "2025-08-29", "announcement_id": "1224624045", "source_url": "https://static.cninfo.com.cn/finalpage/2025-08-30/1224624045.PDF", "sha256": "3a91a57b5ee06ec14c5ff58326c31fb12192f473e42c3115121d9517bab70e8f"}
+      ]
+    },
+    {
+      "ts_code": "601318.SH",
+      "name": "中国平安",
+      "periods": ["2024-03-31"],
+      "expected": {"revision": "original", "announcement_match": "issuer_preferred_candidate", "status": "provided", "announcement_candidate_count": 2},
+      "documents": [
+        {"period_end": "2024-03-31", "path": "raw_reports/601318.SH_2024-03-31_q1_original.pdf", "announce_date": "2024-04-23", "announcement_id": "1219767035", "source_url": "https://static.cninfo.com.cn/finalpage/2024-04-24/1219767035.PDF", "sha256": "953c37329d7f2e4028292f346b1394e8a60aab2353fb70ef464aa0be1f4c9cca"}
+      ]
+    }
+  ],
+  "adjustment_cases": [
+    {
+      "case_id": "600519-cash-dividend",
+      "ts_code": "600519.SH",
+      "event_type": "cash_dividend",
+      "raw_path": "adjustment_samples/600519.SH/daily_raw.csv",
+      "factor_path": "adjustment_samples/600519.SH/adj_factor.csv",
+      "reference_path": "adjustment_samples/600519.SH/daily_qfq.csv",
+      "raw_sha256": "250d9eb28301810984b64b6d39e49df12d61b78fc90653d96d999662d40f9a50",
+      "factor_sha256": "9d81ec870493bb9d566f790a11baf36e3608ac18eb4a114057c768497584b792",
+      "reference_sha256": "6b39865ab536aaecba01514e7785152b141752bc6d1338a979494e489a3372cc",
+      "tolerance": 0.01,
+      "method_version": "tushare-factor-v1"
+    },
+    {
+      "case_id": "601919-cash-and-transfer",
+      "ts_code": "601919.SH",
+      "event_type": "cash_dividend_and_transfer",
+      "raw_path": "adjustment_samples/601919.SH/daily_raw.csv",
+      "factor_path": "adjustment_samples/601919.SH/adj_factor.csv",
+      "reference_path": "adjustment_samples/601919.SH/daily_qfq.csv",
+      "raw_sha256": "333028269693911ed30e1b9716de4a473b2eca5e289551576f64d5876d31743a",
+      "factor_sha256": "3295143cd30dd2ddc29dd1be8b98f60c4085f97466a4a0efe8054610dec15f59",
+      "reference_sha256": "79e8e51f37946f2ef81186ea3d0f434a58b3827cb60be94333915b951d1b88c3",
+      "tolerance": 0.01,
+      "method_version": "tushare-factor-v1"
+    },
+    {
+      "case_id": "600221-no-event-control",
+      "ts_code": "600221.SH",
+      "event_type": "no_event_control",
+      "raw_path": "adjustment_samples/600221.SH/daily_raw.csv",
+      "factor_path": "adjustment_samples/600221.SH/adj_factor.csv",
+      "reference_path": "adjustment_samples/600221.SH/daily_qfq.csv",
+      "raw_sha256": "af66933104da3fb7f961ce1eb5f2cc73341bcbaef186e749eb4d917ed506fe2d",
+      "factor_sha256": "42859e01189c489192d4807dbcd8e56e94633a38af9ab32c822921ffa36ce9c6",
+      "reference_sha256": "af66933104da3fb7f961ce1eb5f2cc73341bcbaef186e749eb4d917ed506fe2d",
+      "tolerance": 0.000001,
+      "method_version": "tushare-factor-v1"
+    }
+  ]
+}

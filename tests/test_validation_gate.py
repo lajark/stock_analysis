@@ -24,6 +24,7 @@ def _financial() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "end_date": pd.to_datetime(["2025-12-31"]),
+            "ann_date": pd.to_datetime(["2026-03-01"]),
             "revenue": [100.0],
         }
     )
@@ -109,3 +110,41 @@ def test_validation_gate_blocks_future_announcement_revision() -> None:
 
     assert result.status == "block"
     assert any("未来信息泄漏" in reason for reason in result.blocking_reasons)
+
+
+def test_validation_gate_degrades_when_announcement_metadata_is_missing() -> None:
+    missing = pd.DataFrame({"end_date": pd.to_datetime(["2025-12-31"]), "revenue": [100.0]})
+
+    result = validate_analysis_inputs(
+        run_id="run-missing-announcement",
+        ticker="600519.SH",
+        requested_date="2026-08-14",
+        daily=_daily(),
+        datasets={"income": missing},
+    )
+
+    assert result.status == "degraded"
+    assert result.allow_llm is True
+    assert result.confidence_cap == 60
+    assert any("公告日期" in check.message for check in result.checks)
+
+
+def test_validation_gate_degrades_when_some_announcement_dates_are_missing() -> None:
+    partial = pd.DataFrame(
+        {
+            "end_date": pd.to_datetime(["2025-06-30", "2025-12-31"]),
+            "ann_date": pd.to_datetime(["2025-08-30", None]),
+            "revenue": [90.0, 100.0],
+        }
+    )
+
+    result = validate_analysis_inputs(
+        run_id="run-partial-announcement",
+        ticker="600519.SH",
+        requested_date="2026-08-14",
+        daily=_daily(),
+        datasets={"income": partial},
+    )
+
+    assert result.status == "degraded"
+    assert any("公告日期" in check.message for check in result.checks)
